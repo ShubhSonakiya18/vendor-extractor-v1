@@ -7,6 +7,7 @@ importing the module is safe.
 """
 
 import dataclasses
+from pathlib import Path
 
 import pytest
 
@@ -14,6 +15,7 @@ from app.services.extraction_pipeline.ingest.ocr_engine import (
     _RAPIDOCR_KNOWN_KWARGS,
     OCREngine,
     RapidOCRTuning,
+    stock_fp32_paths,
 )
 
 
@@ -52,13 +54,45 @@ def test_dilation_flag_is_inverted_because_rapidocr_only_exposes_the_negative():
 
 
 def test_none_model_paths_are_omitted_entirely():
-    """Passing model_path=None would override the shipped model with nothing."""
-    kwargs = RapidOCRTuning().to_rapidocr_kwargs()
+    """Passing model_path=None omits the key -- RapidOCR then falls back to
+    its own bundled default, which is how a caller opts back into stock fp32
+    (see RapidOCRTuning's model-override comment)."""
+    kwargs = RapidOCRTuning(det_model_path=None, rec_model_path=None,
+                            rec_keys_path=None).to_rapidocr_kwargs()
     for key in ("det_model_path", "rec_model_path", "rec_keys_path"):
         assert key not in kwargs
 
     kwargs = RapidOCRTuning(rec_model_path="C:/models/en_rec.onnx").to_rapidocr_kwargs()
     assert kwargs["rec_model_path"] == "C:/models/en_rec.onnx"
+
+
+def test_default_model_paths_point_at_the_committed_int8_weights():
+    """SUPERSEDED 2026-09-07: bare RapidOCRTuning() used to omit det/rec
+    model paths (RapidOCR's own bundled fp32). int8-quantized weights,
+    committed under config/ocr_models/ via git-lfs, are now the default --
+    see RapidOCRTuning's own comment for the accuracy/latency evidence.
+    rec_keys_path is unaffected (quantization does not touch the charset)."""
+    t = RapidOCRTuning()
+    assert t.det_model_path is not None and t.det_model_path.endswith("rapidocr_det_int8.onnx")
+    assert t.rec_model_path is not None and t.rec_model_path.endswith("rapidocr_rec_int8.onnx")
+    assert t.rec_keys_path is None
+    assert Path(t.det_model_path).is_file()
+    assert Path(t.rec_model_path).is_file()
+
+
+def test_stock_fp32_paths_resolves_real_files():
+    """The documented way back to fp32 -- must point at files that actually
+    exist, not a guessed/hardcoded location.
+
+    Unlike the rest of this file, this genuinely needs rapidocr_onnxruntime
+    installed (it resolves paths inside that package) -- skip rather than
+    fail on a machine that only has the tuning layer available.
+    """
+    pytest.importorskip("rapidocr_onnxruntime")
+    det, rec = stock_fp32_paths()
+    assert Path(det).is_file()
+    assert Path(rec).is_file()
+    assert det != rec
 
 
 def test_shipped_defaults_encode_the_fairness_fixes():

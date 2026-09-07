@@ -27,11 +27,16 @@ import dataclasses
 import logging
 import os
 import time
+from pathlib import Path
 from typing import Any, Optional
 
 import numpy as np
 
 from ..models import BBox, SpanSource, TextSpan
+
+# backend/app/services/extraction_pipeline/ingest/ocr_engine.py -> backend/
+_BACKEND_DIR = Path(__file__).resolve().parents[4]
+_OCR_MODELS_DIR = _BACKEND_DIR / "config" / "ocr_models"
 
 logger = logging.getLogger(__name__)
 
@@ -161,6 +166,29 @@ _VALID_LIMIT_TYPES = {"min", "max"}
 _VALID_SCORE_MODES = {"fast", "slow"}
 
 
+def stock_fp32_paths() -> tuple[str, str]:
+    """Absolute paths to RapidOCR's own bundled fp32 (det, rec) models.
+
+    Resolved from the installed `rapidocr_onnxruntime` package rather than
+    hardcoded, so it works regardless of venv location or OS. Used to opt
+    back into fp32 without needing int8 uninstalled or int8's committed files
+    removed -- see RapidOCRTuning's model-override comment.
+    """
+    import rapidocr_onnxruntime
+
+    models_dir = Path(rapidocr_onnxruntime.__file__).resolve().parent / "models"
+    det = models_dir / "ch_PP-OCRv4_det_infer.onnx"
+    rec = models_dir / "ch_PP-OCRv4_rec_infer.onnx"
+    for p in (det, rec):
+        if not p.is_file():
+            raise FileNotFoundError(
+                f"Expected RapidOCR's stock model at {p}, but it is not there. "
+                "The rapidocr-onnxruntime package layout may have changed -- "
+                "check its installed version against what this function assumes."
+            )
+    return str(det), str(rec)
+
+
 @dataclasses.dataclass(frozen=True)
 class RapidOCRTuning:
     """RapidOCR knobs, in this project's vocabulary.
@@ -220,14 +248,49 @@ class RapidOCRTuning:
     det_use_dilation: bool = True          # emitted NEGATED, see to_rapidocr_kwargs
     det_score_mode: str = "fast"
 
-    # -- model overrides (all None = use the shipped models) ----------------
-    # The shipped recogniser is PP-OCRv4 mobile with the 6623-glyph Chinese
-    # charset. Swapping in an English model is a promising accuracy experiment
-    # -- an earlier PP-OCRv6_tiny test hallucinated CJK glyphs on Latin text --
-    # but a hallucinating recogniser is this system's worst failure mode, so it
-    # stays opt-in and never rides in as a default.
-    det_model_path: Optional[str] = None
-    rec_model_path: Optional[str] = None
+    # -- model overrides -----------------------------------------------------
+    # SUPERSEDED 2026-09-07: int8-quantized weights are now the default,
+    # committed under config/ocr_models/ (via git-lfs -- see .gitattributes).
+    # Both were quantized from RapidOCR 1.4.4's own shipped PP-OCRv4 mobile
+    # weights, calibrated on this project's real sample documents:
+    #   - det: static QDQ int8 (calibrated on 9 real page renders through
+    #     RapidOCR's own TextDetector.preprocess_op, so activation scales see
+    #     genuine input, not synthetic data). 4.5MB -> 1.4MB.
+    #   - rec: dynamic QDQ int8, weights-only, MatMul ops only (ONNX Runtime's
+    #     CPU provider has no ConvInteger kernel, so a fully int8 QOperator
+    #     rec model loads but cannot execute -- confirmed by hitting exactly
+    #     that error). Static/activation-quantized rec was tried and
+    #     REJECTED: recall collapsed 95%->45% (11/24 fields missed, 0 wrong)
+    #     with only 78 calibration crops from 3 documents -- too narrow a
+    #     calibration set for activation quantization specifically, not a
+    #     problem with int8 itself. The weights-only dynamic variant has none
+    #     of that risk and is what ships. 10.4MB -> 7.4MB.
+    # Combined result vs stock fp32, 12 isolated reps each, real ground truth:
+    # median latency 28.8% faster (11.75s vs 16.51s), 19/24 correct on both
+    # (identical, the one miss is the pre-existing nature_of_business bug --
+    # see field_dictionary.yaml), every identifier field byte-identical
+    # across all 24 runs. See plan.md for the full writeup.
+    #
+    # Charset (rec_keys_path) is UNCHANGED -- quantization does not touch the
+    # vocabulary, only the weights, so this stays None (RapidOCR's own
+    # internal default) exactly as before.
+    #
+    # To run the original fp32 stock models instead (e.g. to compare, or if
+    # int8 ever regresses on a different document set):
+    #   - In code: RapidOCRTuning(det_model_path=None, rec_model_path=None) --
+    #     to_rapidocr_kwargs() drops a None field entirely, so RapidOCR falls
+    #     back to its own bundled fp32 default.
+    #   - Via environment: from_env() treats a BLANK OCR_RAPID_*_MODEL_PATH as
+    #     unset, which falls through to THIS class default (int8, not fp32) --
+    #     a blank var does NOT get you fp32. Point it at the real stock files
+    #     instead, resolved with stock_fp32_paths() below so nobody needs to
+    #     know the venv's install path:
+    #       python -c "from app.services.extraction_pipeline.ingest.ocr_engine \
+    #         import stock_fp32_paths; d,r = stock_fp32_paths(); \
+    #         print('OCR_RAPID_DET_MODEL_PATH=' + d); \
+    #         print('OCR_RAPID_REC_MODEL_PATH=' + r)"
+    det_model_path: Optional[str] = str(_OCR_MODELS_DIR / "rapidocr_det_int8.onnx")
+    rec_model_path: Optional[str] = str(_OCR_MODELS_DIR / "rapidocr_rec_int8.onnx")
     rec_keys_path: Optional[str] = None
 
     # -- threading ----------------------------------------------------------
