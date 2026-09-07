@@ -1,13 +1,7 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { login } from '../api'
 import './LoginPage.css'
-
-/* ─── Hardcoded credentials ─────────────────────────────── */
-const VALID_CREDENTIALS = [
-  { email: 'admin@netsmartz.com',      password: 'Admin@123' },
-  { email: 'agamjot@netsmartz.com',    password: 'Agam@2024' },
-  { email: 'you@netsmartz.com',        password: 'password123' },
-]
 
 /* ─── SVG icons ─────────────────────────────────────────── */
 const MailIcon = () => (
@@ -76,29 +70,22 @@ export default function LoginPage() {
     return !errs.email && !errs.password
   }
 
-  function handleSubmit(e) {
+  async function handleSubmit(e) {
     e.preventDefault()
     setAuthError('')
     if (!validate()) return
 
     setLoading(true)
-    // Simulate network delay then check credentials
-    setTimeout(() => {
-      const match = VALID_CREDENTIALS.find(
-        c => c.email.toLowerCase() === email.trim().toLowerCase() && c.password === password
-      )
-      if (match) {
-        // No real backend session exists yet (see app/routers/auth.py) -- this
-        // is the only record of who "logged in", read back by NavBar so the
-        // header shows the account that was actually used rather than a
-        // fixed name.
-        localStorage.setItem('userEmail', match.email)
-        navigate('/dashboard')
-      } else {
-        setAuthError('Incorrect email or password. Please try again.')
-        setLoading(false)
-      }
-    }, 900)
+    try {
+      // Real email + password auth against the backend /auth/login endpoint.
+      // login() stores the JWT (and refresh token) in localStorage; every
+      // subsequent API call attaches it via authFetch().
+      await login(email.trim(), password)
+      navigate('/dashboard')
+    } catch (err) {
+      setAuthError(err.message || 'Sign-in failed. Please try again.')
+      setLoading(false)
+    }
   }
 
   function handleForgotPassword(e) {
@@ -226,11 +213,6 @@ export default function LoginPage() {
             Forgot your password?&nbsp;
             <a href="#" id="reset-link" onClick={handleForgotPassword}>Reset it</a>
           </p>
-
-          {/* Demo hint */}
-          <div className="login-demo-hint">
-            <strong>Demo credentials:</strong> you@netsmartz.com / password123
-          </div>
 
         </div>
       </div>

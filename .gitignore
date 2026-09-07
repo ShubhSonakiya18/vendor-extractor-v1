@@ -2,6 +2,12 @@
 backend/app/uploads/
 backend/app/outputs/
 backend/app/logs/
+backend/logs/
+
+# Local SQLite databases (auth flow default DATABASE_URL). Test/Prod use Postgres.
+*.db
+backend/app.db
+backend/_alembic_placeholder.db
 
 # The CLI entry points (pipeline.py, dump_ocr.py) default --out to a path relative
 # to the working directory, so a run from backend/ lands here rather than under
@@ -30,8 +36,12 @@ venv/
 .vscode/
 .idea/
 
-# Env / secrets
+# Env / secrets -- real env files are per-host and never committed; the
+# .env*.example templates are.
 .env
+.env.*
+!.env.example
+!.env.*.example
 
 # Node / React
 node_modules/

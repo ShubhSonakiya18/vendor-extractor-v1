@@ -86,6 +86,21 @@ fields:
     priority: 90
     required: true
     cross_document_consistency: true
+    search:
+      # BUG FOUND 2026-09-04 (Smarter e-Learning GST REG-06 verification, real
+      # PDF text-layer coordinates): "Legal Name" label bbox height is 12.18pt;
+      # its value "SMARTER E-LEARNING PRIVATE LIMITED" sits 161.82pt to the
+      # right on the same line -- a gap of 13.29 label-heights, just over the
+      # default max_distance: 12.0. So the correct same-row value was silently
+      # EXCLUDED from candidates entirely (never even generated), and every
+      # candidate the field fell back to was some *other* row's caption text
+      # instead, found via the still-open "below" direction scanning down the
+      # same left-hand caption column. Same failure shape as the
+      # nature_of_business bug noted below (gap 12.56 vs max_distance 12.0);
+      # 15.0 clears this document's 13.29 with headroom for layout variance in
+      # others, the same reasoning that field already applies at 14.0.
+      directions: [right, below]
+      max_distance: 15.0
 
   company_type:
     description: Constitution of the business (Pvt Ltd, Proprietorship, ...)
@@ -244,6 +259,15 @@ fields:
       - Name of Premises
       - Premises
       - Door No
+      # GST REG-06's own caption for its single combined address line. Listed
+      # as its own full-phrase synonym rather than relying on "Address" to
+      # fuzzy-match it -- field_matcher._is_inline_split deliberately treats
+      # "Address of Principal Place of Business" scoring high against the bare
+      # "Address" label as a false positive (prose, not a caption+value pair),
+      # so without an exact synonym this line's value is never captured at all
+      # and city/state/pin_code (derived from it in onboarding_mapper.py) stay
+      # empty for every GST-certificate-only submission.
+      - Address of Principal Place of Business
     patterns: []
     normalization: [strip, collapse_spaces]
     validators: []

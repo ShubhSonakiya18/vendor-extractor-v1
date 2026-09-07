@@ -57,12 +57,21 @@ class TestHappyPath:
         assert set(self.out) == {
             "company_name", "contact_name", "billing_address", "city", "state",
             "zip_code", "country", "gst_registration_number", "pan_number",
-            "email_id_to", "email_id_cc", "phone_number", "bank_details",
-            "source_documents", "fields_needing_review",
+            "email_id_to", "email_id_cc", "phone_number",
+            "payment_terms", "salesperson", "region", "customer_agreement", "type",
+            "bank_details", "source_documents", "fields_needing_review",
         }
         assert set(self.out["bank_details"]) == {
             "bank_name", "account_number", "ifsc_code", "branch",
         }
+
+    def test_business_fields_present_but_empty(self):
+        # No document supplies these; type defaults to "Services".
+        assert self.out["payment_terms"] == ""
+        assert self.out["salesperson"] == ""
+        assert self.out["region"] == ""
+        assert self.out["customer_agreement"] == ""
+        assert self.out["type"] == "Services"
 
     def test_identity_and_address_fields(self):
         assert self.out["company_name"] == "M B Control Systems Pvt Ltd"

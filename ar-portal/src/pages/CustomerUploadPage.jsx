@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import NavBar from '../components/NavBar'
 import Stepper from '../components/Stepper'
 import FileDropzone from '../components/FileDropzone'
-import { extractDocuments } from '../api'
+import { extractOnboardingDocuments } from '../api'
 
 const CUSTOMER_STEPS = [
   { label: 'Upload' },
@@ -25,9 +25,13 @@ export default function CustomerUploadPage() {
     setError('')
 
     try {
-      // All uploaded files go as documents; no Excel template for customer flow
+      // Every file goes as a "document" -- no Excel template and no
+      // document-type field for the customer flow. Each upload is OCR'd and
+      // classified from its own content (cancelled cheque, GST certificate,
+      // Udyam certificate, PAN card, ...) by the backend; the caller never
+      // says which file is which. See onboarding_mapper.py / routers/onboarding.py.
       const docFiles = files.map(f => f.fileObject)
-      const result = await extractDocuments(docFiles, null)
+      const result = await extractOnboardingDocuments(docFiles)
 
       navigate('/customer/review', { state: { result } })
     } catch (err) {
@@ -65,12 +69,14 @@ export default function CustomerUploadPage() {
           <FileDropzone
             files={files}
             setFiles={setFiles}
-            accept=".pdf,.xlsx,.xls,.doc,.docx,.png,.jpg,.jpeg"
+            accept=".pdf,.png,.jpg,.jpeg,.tif,.tiff,.bmp,.webp"
           />
 
           <p className="helper-text" style={{ marginTop: 16 }}>
-            Upload the customer document — supporting documents (<strong>GST certificate</strong>,{' '}
-            <strong>bank letter</strong>, <strong>board resolution</strong>) can all be added here too.
+            Upload the customer's documents as PDFs or images — <strong>GST certificate</strong>,{' '}
+            <strong>cancelled cheque</strong>, <strong>Udyam certificate</strong>,{' '}
+            <strong>PAN card</strong>, whatever you have. There's no document-type field to fill
+            in; each file is read and matched to its type automatically.
           </p>
 
           <div className="action-bar">

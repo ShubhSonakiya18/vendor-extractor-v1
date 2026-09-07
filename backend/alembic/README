@@ -1,0 +1,44 @@
+Database migrations (Alembic)
+=============================
+
+The schema is defined by the SQLAlchemy models in app/models/model.py and
+applied to a database by Alembic migrations in alembic/versions/.
+
+The DB URL is NOT configured here -- alembic/env.py reads it from the app
+config (settings.DATABASE_URL), so migrations always target whatever
+environment ENV_FILE points at. Run all commands from the backend/ directory
+with the venv active.
+
+Common commands
+---------------
+  alembic current                 # which revision the DB is at
+  alembic history --verbose       # list all revisions
+  alembic upgrade head            # apply everything up to latest
+  alembic downgrade -1            # roll back one revision
+
+Targeting an environment
+------------------------
+  alembic upgrade head                       # local (.env)
+  ENV_FILE=.env.test alembic upgrade head     # Test
+  ENV_FILE=.env.production alembic upgrade head  # Production
+
+After changing a model
+----------------------
+  1. Edit app/models/model.py
+  2. alembic revision --autogenerate -m "short description"
+  3. OPEN the generated file in alembic/versions/ and check it -- autogenerate
+     misses some changes (server-default changes, some constraint renames,
+     enum value changes, data migrations) and can get column-type changes
+     wrong. Adjust by hand as needed.
+  4. Test it: `alembic upgrade head` then `alembic downgrade -1` on a
+     throwaway database.
+  5. Commit the migration file WITH the model change in the same commit.
+
+Notes
+-----
+- env.py sets render_as_batch=True for SQLite so local dev can run ALTERs
+  that SQLite doesn't support natively; it's a no-op on Postgres.
+- ENV=local still auto-creates missing tables on `uvicorn main:app` startup so
+  a fresh clone runs without a migrate step. Test / Production do NOT --
+  `alembic upgrade head` is part of every deploy there (see docs/PROMOTION.md).
+- alembic.ini's sqlalchemy.url is a placeholder only; env.py overrides it.

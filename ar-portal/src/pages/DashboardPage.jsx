@@ -27,6 +27,15 @@ const ChevronRight = () => (
   </svg>
 )
 
+const ListIcon = () => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"
+       strokeLinecap="round" strokeLinejoin="round">
+    <line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/>
+    <line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/>
+    <line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/>
+  </svg>
+)
+
 const ACTION_CARDS = [
   {
     id:     'card-vendor',
@@ -41,6 +50,13 @@ const ACTION_CARDS = [
     desc:   'Upload a customer document to extract and review before onboarding.',
     icon:   <CustomerIcon />,
     route:  '/customer/upload',
+  },
+  {
+    id:     'card-records',
+    title:  'Saved Records',
+    desc:   'View vendors and customers already saved in the portal.',
+    icon:   <ListIcon />,
+    route:  '/records/vendor',
   },
 ]
 

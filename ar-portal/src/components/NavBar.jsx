@@ -1,4 +1,5 @@
 import { useNavigate } from 'react-router-dom'
+import { logout } from '../api'
 import './NavBar.css'
 
 const MailIcon = () => (
@@ -25,6 +26,11 @@ export default function NavBar({ userName }) {
   const displayName = userName || (storedEmail ? deriveDisplayName(storedEmail) : 'Guest')
   const initials = displayName.split(' ').map(n => n[0]).join('').slice(0, 2).toUpperCase()
 
+  async function handleLogout() {
+    await logout()
+    navigate('/', { replace: true })
+  }
+
   return (
     <header className="nav-bar">
       <div className="nav-inner">
@@ -37,6 +43,9 @@ export default function NavBar({ userName }) {
         <div className="nav-user">
           <div className="nav-avatar" aria-hidden="true">{initials}</div>
           <span className="nav-user-name">{displayName}</span>
+          <button type="button" className="nav-logout" onClick={handleLogout}>
+            Log out
+          </button>
         </div>
       </div>
     </header>
