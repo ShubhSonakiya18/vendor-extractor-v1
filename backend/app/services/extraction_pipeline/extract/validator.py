@@ -89,6 +89,27 @@ def _derived_state_code_valid(spec: ValidatorSpec, value: str, values: dict) -> 
     return source_value[start:end] in _VALID_STATE_CODES
 
 
+def _derived_pin_matches_state(spec: ValidatorSpec, value: str, values: dict) -> Optional[bool]:
+    """The PIN directory knows the state a 6-digit PIN belongs to. Compare it
+    against the extracted state. Returns None ("cannot judge") when the state
+    field is blank, the PIN field (`spec.source`) is blank, or the PIN is not
+    in the directory -- an absent value is not this rule's to report, and a
+    lookup miss is not evidence of a mismatch."""
+    from .address_lookups import canonical_state, pin_state_district
+
+    pin = (values.get(spec.source or "") or "").strip()
+    if not value.strip() or len(pin) != 6 or not pin.isdigit():
+        return None
+    looked_up = pin_state_district(pin)
+    if not looked_up:
+        return None
+    pin_state = looked_up[0]
+    # canonicalise both sides so "west bengal" / "WB" / "West Bengal" agree.
+    got = canonical_state(value) or value.strip()
+    want = canonical_state(pin_state) or pin_state
+    return got.casefold() == want.casefold()
+
+
 _RULES: dict[str, Callable[[ValidatorSpec, str, dict], bool]] = {
     "regex": _rule_regex,
     "length": _rule_length,
@@ -99,6 +120,7 @@ _RULES: dict[str, Callable[[ValidatorSpec, str, dict], bool]] = {
 _DERIVED: dict[str, Callable[[ValidatorSpec, str, dict], Optional[bool]]] = {
     "substring_equals": _derived_substring_equals,
     "state_code_valid": _derived_state_code_valid,
+    "pin_matches_state": _derived_pin_matches_state,
 }
 
 

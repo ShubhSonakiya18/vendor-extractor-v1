@@ -92,6 +92,18 @@ validators:
     severity: error
     message: Not a valid 6-digit Indian PIN code
 
+  pin_matches_state:
+    # The PIN directory (backend/data/address/pin_directory.csv) knows which
+    # state a 6-digit PIN belongs to. If the extracted state disagrees with
+    # the PIN's own state, one of the two was misread -- flag both. Returns
+    # "cannot judge" (skipped) when either field is empty or the PIN is not in
+    # the directory, so this never fires on a missing value.
+    type: derived
+    rule: pin_matches_state
+    source: pin_code
+    severity: warning
+    message: State does not match the state the PIN code belongs to
+
   indian_state:
     type: enum
     severity: warning

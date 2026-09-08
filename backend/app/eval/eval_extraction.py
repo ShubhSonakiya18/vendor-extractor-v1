@@ -76,6 +76,16 @@ EXACT_MATCH_FIELDS = {
 _PUNCT = re.compile(r"[.,\-/&()]+")
 _SPACE = re.compile(r"\s+")
 
+# The address is filled as one unit -- address_1..4 + city + state + pin_code.
+# A combined "Address of Principal Place of Business" line that the resolver
+# fails to segment shows up as several independent `missed`/`wrong` fields;
+# grouping them into one block verdict (below) makes an address regression
+# legible as a single number instead of being averaged away across 24 fields.
+ADDRESS_FIELDS = (
+    "address_1", "address_2", "address_3", "address_4",
+    "city", "state", "pin_code",
+)
+
 
 class GroundTruthError(ValueError):
     pass
@@ -199,6 +209,27 @@ def evaluate(ground_truth: dict, extracted: dict) -> list[dict]:
     ]
 
 
+def _address_block(results: list[dict]) -> Optional[dict]:
+    """Roll the address fields up into one verdict. None when the ground truth
+    carries no address fields at all."""
+    rows = [r for r in results if r["field"] in ADDRESS_FIELDS]
+    if not rows:
+        return None
+    counts = {"correct": 0, "wrong": 0, "missed": 0,
+              "hallucinated": 0, "correctly_absent": 0}
+    for r in rows:
+        counts[r["outcome"]] += 1
+    bad = counts["wrong"] + counts["missed"] + counts["hallucinated"]
+    scored = len(rows) - counts["correctly_absent"]
+    return {
+        **counts,
+        "fields": len(rows),
+        # every field the GT expects a value for was got right
+        "exact": bad == 0,
+        "field_accuracy": round(counts["correct"] / scored * 100, 1) if scored else None,
+    }
+
+
 def summarize(results: list[dict]) -> dict:
     counts = {
         "correct": 0, "wrong": 0, "missed": 0,
@@ -220,6 +251,7 @@ def summarize(results: list[dict]) -> dict:
         "accuracy": round(
             (counts["correct"] + counts["correctly_absent"]) / len(results) * 100, 1
         ) if results else None,
+        "address_block": _address_block(results),
     }
 
 
@@ -302,6 +334,16 @@ def print_report(results: list[dict], summary: dict, ground_truth: dict) -> None
     print(f"  recall           : {summary['recall']}%   (of fields that DO have a value, how many were got right)")
     print(f"  precision        : {summary['precision']}%   (of values produced, how many were right)")
     print(f"  accuracy         : {summary['accuracy']}%   (all fields, including correctly-left-blank)")
+
+    ab = summary.get("address_block")
+    if ab:
+        verdict = "PASS" if ab["exact"] else "FAIL"
+        print(f"  {'-'*40}")
+        print(f"  address block    : {verdict}   "
+              f"({ab['correct']} correct / {ab['wrong']} wrong / {ab['missed']} missed "
+              f"/ {ab['hallucinated']} hallucinated across {ab['fields']} address fields)")
+        print(f"                     field accuracy {ab['field_accuracy']}%   "
+              f"-- address_1..4 + city + state + pin_code scored as one unit")
     print("=" * 92)
 
 

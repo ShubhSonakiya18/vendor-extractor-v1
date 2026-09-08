@@ -1,0 +1,167 @@
+# =============================================================================
+# ADDRESS SEGMENTATION TEST CASES
+# =============================================================================
+# Each case is a raw address string (as it might arrive from a document with no
+# per-part captions -- Udyam certificate, cancelled cheque, GST REG-06's single
+# "Address of Principal Place of Business" line) and the fields a correct
+# parser should pull out of it.
+#
+# ALL VALUES ARE FABRICATED. No real GSTIN/PAN/account numbers appear -- these
+# are addresses only, using generic street names and real-but-public city/state
+# names. Safe to commit.
+#
+# This is NOT ground truth generated from the pipeline. The input is a
+# hand-written string; the expected output is a hand-made decision. It measures
+# the SPLITTING LOGIC directly: feed a string, check where the boundaries land.
+#
+# Convention (interpretation B):
+#   address_1  = the premises / building / street portion, kept as ONE string
+#                (no building-vs-street sub-split). Everything before the city.
+#   address_2  = genuine leftover text only; "" when everything fits in
+#                address_1.
+#   city / state / pin_code = the isolated canonical values.
+#   An expected value of "" means the parser should produce nothing for it.
+# =============================================================================
+
+version: 1
+
+cases:
+
+  - id: clean_comma_separated
+    note: The easy case -- street, city, state, pin, all comma-separated.
+    address: "14 EXAMPLE ROAD, KORAMANGALA, BENGALURU, Karnataka, 560095"
+    expect:
+      address_1: "14 EXAMPLE ROAD, KORAMANGALA"
+      address_2: ""
+      city: "Bengaluru"
+      state: "Karnataka"
+      pin_code: "560095"
+
+  - id: no_comma_before_pin
+    note: >-
+      PIN runs straight on with no separator; state is a single token. The
+      city token in the string is "Mohali" (S.A.S Nagar is the district).
+    address: "PLOT NO IT C 6, SECTOR 67, IT PARK, MOHALI, Punjab 160055"
+    expect:
+      address_1: "PLOT NO IT C 6, SECTOR 67, IT PARK"
+      address_2: ""
+      city: "Mohali"
+      state: "Punjab"
+      pin_code: "160055"
+
+  - id: state_misspelled_by_ocr
+    note: >-
+      "WEST BANGAL" is an OCR misread of "West Bengal". A parser that only
+      does an exact state-list match fails here; a PIN-directory lookup
+      (711302 -> West Bengal) recovers it.
+    address: "31/1 AHIRIPUKUR ROAD, BALLYGUNGE, KOLKATA, WEST BANGAL, 711302"
+    expect:
+      address_1: "31/1 AHIRIPUKUR ROAD, BALLYGUNGE"
+      address_2: ""
+      city: "Kolkata"
+      state: "West Bengal"
+      pin_code: "711302"
+
+  - id: extra_localities_before_city
+    note: >-
+      Several locality/village names sit between the street and the real city.
+      The parser must pick HOWRAH (a real city / the PIN's district), not
+      NATIBPUR (a locality). The naive "segment right before the state" rule
+      picks NATIBPUR and is wrong.
+    address: >-
+      3RD FLOOR, PART A BLOCK B, SRIJAN INDUSTRIAL LOGISTIC PARK, MOHIARY,
+      CHANDIBAGAN, ANDUL, NATIBPUR, HOWRAH, West Bengal, 711302
+    expect:
+      address_1: "3RD FLOOR, PART A BLOCK B, SRIJAN INDUSTRIAL LOGISTIC PARK, MOHIARY, CHANDIBAGAN, ANDUL, NATIBPUR"
+      address_2: ""
+      city: "Howrah"
+      state: "West Bengal"
+      pin_code: "711302"
+
+  - id: no_state_token_only_pin
+    note: >-
+      No state name in the string at all -- only the PIN. State must come from
+      the PIN-directory lookup (400001 -> Maharashtra, Mumbai).
+    address: "227 NARIMAN POINT, MUMBAI, 400001"
+    expect:
+      address_1: "227 NARIMAN POINT"
+      address_2: ""
+      city: "Mumbai"
+      state: "Maharashtra"
+      pin_code: "400001"
+
+  - id: pin_missing_entirely
+    note: >-
+      No PIN anywhere. State and city come only from token matching against
+      the state / city lists. pin_code stays "".
+    address: "12 MG ROAD, PUNE, Maharashtra"
+    expect:
+      address_1: "12 MG ROAD"
+      address_2: ""
+      city: "Pune"
+      state: "Maharashtra"
+      pin_code: ""
+
+  - id: state_split_across_two_segments
+    note: >-
+      OCR broke "West Bengal" onto two lines, so it arrives as two comma
+      segments "WEST", "BENGAL". A multi-token state match (or the PIN lookup)
+      must still resolve it.
+    address: "5 CAMAC STREET, KOLKATA, WEST, BENGAL, 700016"
+    expect:
+      address_1: "5 CAMAC STREET"
+      address_2: ""
+      city: "Kolkata"
+      state: "West Bengal"
+      pin_code: "700016"
+
+  - id: district_and_city_both_present
+    note: >-
+      The string carries the district AND the city, and here they're the same
+      word repeated. The parser should not emit "KOLKATA, KOLKATA" -- one
+      city value, "Kolkata".
+    address: "8 SHAKESPEARE SARANI, KOLKATA, KOLKATA, West Bengal, 700071"
+    expect:
+      address_1: "8 SHAKESPEARE SARANI"
+      address_2: ""
+      city: "Kolkata"
+      state: "West Bengal"
+      pin_code: "700071"
+
+  - id: nothing_parseable
+    note: >-
+      A building/premises name with no city, state or PIN. Everything goes to
+      address_1; city/state/pin_code all "".
+    address: "SRIJAN INDUSTRIAL LOGISTIC PARK, BLOCK B"
+    expect:
+      address_1: "SRIJAN INDUSTRIAL LOGISTIC PARK, BLOCK B"
+      address_2: ""
+      city: ""
+      state: ""
+      pin_code: ""
+
+  - id: trailing_country_after_pin
+    note: >-
+      A stray "INDIA" (or "IN") after the PIN. It must not end up in any
+      address field or be mistaken for a city.
+    address: "9 LODHI ROAD, NEW DELHI, Delhi, 110003, INDIA"
+    expect:
+      address_1: "9 LODHI ROAD"
+      address_2: ""
+      city: "New Delhi"
+      state: "Delhi"
+      pin_code: "110003"
+
+  - id: gst_reg06_single_line
+    note: >-
+      The exact shape of a GST REG-06 "Address of Principal Place of Business"
+      value -- building/road/city/district/state/pin flattened onto one line.
+      Both a city (Mohali) and the district (S.A.S Nagar) appear; the parser
+      should take the city.
+    address: "IT PARK, PHASE 8, MOHALI, S.A.S Nagar, Punjab, 160059"
+    expect:
+      address_1: "IT PARK, PHASE 8"
+      address_2: ""
+      city: "Mohali"
+      state: "Punjab"
+      pin_code: "160059"

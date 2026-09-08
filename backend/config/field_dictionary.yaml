@@ -332,7 +332,7 @@ fields:
       - State/UT
     patterns: []
     normalization: [strip, collapse_spaces, titlecase]
-    validators: [indian_state]
+    validators: [indian_state, pin_matches_state]
     value_type: text
     cross_document_consistency: true
 
