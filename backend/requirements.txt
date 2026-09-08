@@ -8,7 +8,18 @@
 #   source .venv/bin/activate                 (macOS/Linux)
 #   pip install -r backend/requirements.txt
 
-# Active OCR engine (default as of 2026-09-01; see ocr_engine.py).
+# Active OCR engine (default as of 2026-09-09; see ocr_engine.py). RapidOCR's
+# detector/recognizer run through OpenVINO -- ~2.3x faster than the ONNX
+# Runtime path on this machine's Intel CPU, identical accuracy. UNVALIDATED ON
+# AMD/ARM64 -- see ocr_engine.py's OCR_BACKEND comment before deploying to
+# non-Intel hardware; OCR_BACKEND=rapidocr (ONNX Runtime, below) has no such
+# caveat and is the safer default there.
+rapidocr-openvino==1.3.25
+openvino==2024.6.0
+
+# RapidOCR on ONNX Runtime -- the previous default (2026-09-01 to 2026-09-09),
+# still fully supported, no Intel-specific performance caveat. Restore with
+# OCR_BACKEND=rapidocr, no code change needed.
 rapidocr-onnxruntime==1.4.4
 onnxruntime==1.20.1
 

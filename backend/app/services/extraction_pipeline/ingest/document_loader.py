@@ -63,7 +63,10 @@ def _default_dpi_for(engine: Optional[OCREngine]) -> int:
     from ....config.settings import RAPID_RENDER_DPI
 
     backend = (engine or OCREngine()).backend
-    return RAPID_RENDER_DPI if backend == "rapidocr" else RENDER_DPI
+    # rapidocr_openvino (experimental, 2026-09-09) runs the same detector/
+    # recognizer as rapidocr -- just via OpenVINO instead of ONNX Runtime --
+    # so it shares RapidOCR's tuned render DPI, not PaddleOCR's.
+    return RAPID_RENDER_DPI if backend in ("rapidocr", "rapidocr_openvino") else RENDER_DPI
 
 IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp", ".webp"}
 
