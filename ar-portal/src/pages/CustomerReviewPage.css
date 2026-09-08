@@ -69,6 +69,60 @@
   background: #FEF2F2 !important;
 }
 
+/* ── Needs-review banner ── */
+.review-banner {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+  background: var(--color-warning-bg);
+  border: 1px solid rgba(217, 90, 43, .28);
+  border-radius: var(--radius-md);
+  padding: 16px 20px;
+  margin-bottom: 20px;
+}
+
+.review-banner-icon {
+  flex-shrink: 0;
+  width: 34px;
+  height: 34px;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(217, 90, 43, .14);
+}
+.review-banner-icon svg { width: 18px; height: 18px; color: var(--color-warning-text); }
+
+.review-banner-title {
+  font-size: 0.9rem;
+  font-weight: 700;
+  color: var(--color-warning-text);
+  margin-bottom: 3px;
+}
+
+.review-banner-sub {
+  font-size: 0.8rem;
+  line-height: 1.5;
+  color: var(--color-text-muted);
+}
+
+.review-banner-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.review-chip {
+  font-size: 0.7rem;
+  font-weight: 600;
+  padding: 2px 9px;
+  border-radius: 999px;
+  background: var(--color-surface);
+  border: 1px solid rgba(217, 90, 43, .3);
+  color: var(--color-warning-text);
+}
+
 /* ── Attached docs card ── */
 .attached-docs-card {
   background: #F8FAFC;

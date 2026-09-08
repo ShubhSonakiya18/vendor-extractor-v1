@@ -17,6 +17,15 @@ const DocsIcon = () => (
   </svg>
 )
 
+const AlertIcon = () => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
+       strokeLinecap="round" strokeLinejoin="round">
+    <path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
+    <line x1="12" y1="9" x2="12" y2="13"/>
+    <line x1="12" y1="17" x2="12.01" y2="17"/>
+  </svg>
+)
+
 /**
  * Normalises response from either /onboarding/extract or /extract into a
  * consistent customer dictionary.
@@ -73,6 +82,57 @@ function extractCustomerValues(result) {
   }
 }
 
+/**
+ * The backend (onboarding_mapper.to_onboarding_schema) returns
+ * `fields_needing_review` -- onboarding field names whose value was inferred
+ * rather than read straight off a labelled field: a PAN derived from the
+ * GSTIN, or address_1/city/state/zip_code split out of a single run-on
+ * address line by the address resolver. Those inputs are highlighted and
+ * badged so the reviewer checks them before submitting.
+ */
+function reviewSet(result) {
+  const list = Array.isArray(result?.fields_needing_review)
+    ? result.fields_needing_review
+    : []
+  // The engine reports "pin_code"; this form's field is "zip_code".
+  return new Set(list.map(f => (f === 'pin_code' ? 'zip_code' : f)))
+}
+
+// Human-readable names for the review banner.
+const FIELD_TITLES = {
+  company_name: 'Company Name',
+  billing_address: 'Billing Address',
+  city: 'City',
+  state: 'State',
+  zip_code: 'Zip / Pin code',
+  country: 'Country',
+  gst_registration_number: 'GST Registration Number',
+  pan_number: 'PAN Number',
+  email_id_to: 'Email ID TO',
+  phone_number: 'Phone Number',
+}
+
+// Every editable field, in display order. `full` spans both grid columns.
+const FIELDS = [
+  { key: 'company_name',            label: 'Company Name' },
+  { key: 'contact_name',            label: 'Contact Name' },
+  { key: 'billing_address',         label: 'Billing Address', full: true },
+  { key: 'city',                    label: 'City' },
+  { key: 'state',                   label: 'State' },
+  { key: 'zip_code',                label: 'Zip code / Pin code' },
+  { key: 'country',                 label: 'Country' },
+  { key: 'gst_registration_number', label: 'GST(ABN,TRN) Registration Certificate' },
+  { key: 'pan_number',              label: 'PAN Card (Company/Individual)' },
+  { key: 'email_id_to',             label: 'Email ID TO', type: 'email' },
+  { key: 'email_id_cc',             label: 'Email ID CC', type: 'email' },
+  { key: 'phone_number',            label: 'Phone Number' },
+  { key: 'payment_terms',           label: 'Payment Terms' },
+  { key: 'salesperson',             label: 'SALESPERSON' },
+  { key: 'region',                  label: 'REGION' },
+  { key: 'customer_agreement',      label: 'Customer Agreement / Contract / Purchase Order / Sale Order', full: true },
+  { key: 'type',                    label: 'Type', type: 'select', options: ['Services', 'License'] },
+]
+
 export default function CustomerReviewPage() {
   const navigate  = useNavigate()
   const location  = useLocation()
@@ -80,6 +140,7 @@ export default function CustomerReviewPage() {
 
   const result = location.state?.result
   const [formData, setFormData] = useState(() => extractCustomerValues(result))
+  const [review, setReview] = useState(() => reviewSet(result))
 
   if (!result) {
     return (
@@ -102,8 +163,22 @@ export default function CustomerReviewPage() {
   const sourceDocs = result.source_documents?.map(d => d.file_name) ||
                      (Array.isArray(result.documents) ? result.documents.map(d => typeof d === 'string' ? d : d.document) : [])
 
+  const reviewList = [...review].filter(k => k in FIELD_TITLES || FIELDS.some(f => f.key === k))
+
+  // Fields the extractor actually produced a value for (excludes the manual
+  // business fields like salesperson/region that never come from a document).
+  const filledCount = FIELDS.filter(f => f.key !== 'type' && String(formData[f.key] ?? '').trim()).length
+
   function handleChange(field, value) {
     setFormData(prev => ({ ...prev, [field]: value }))
+    // Editing a flagged field clears its flag -- the reviewer has now seen it.
+    if (review.has(field)) {
+      setReview(prev => {
+        const next = new Set(prev)
+        next.delete(field)
+        return next
+      })
+    }
   }
 
   function handleSubmit() {
@@ -122,222 +197,81 @@ export default function CustomerReviewPage() {
           </a>
 
           <h1 className="page-title">Customer Creation</h1>
+
+          {result.timings && (
+            <p style={{ fontSize: '0.8rem', color: 'var(--color-text-subtle)', marginBottom: 4 }}>
+              Extracted {filledCount} field{filledCount === 1 ? '' : 's'} in {result.timings.total}s
+            </p>
+          )}
+
           <Stepper steps={CUSTOMER_STEPS} currentStep={1} />
+
+          {reviewList.length > 0 && (
+            <div className="review-banner" role="alert">
+              <div className="review-banner-icon" aria-hidden="true"><AlertIcon /></div>
+              <div>
+                <div className="review-banner-title">
+                  {reviewList.length} field{reviewList.length > 1 ? 's' : ''} need{reviewList.length > 1 ? '' : 's'} a check
+                </div>
+                <div className="review-banner-sub">
+                  These were inferred (e.g. split out of a single address line, or a PAN
+                  derived from the GSTIN) rather than read from a labelled field. Confirm
+                  or correct each, then submit — editing one clears its flag.
+                </div>
+                <div className="review-banner-chips">
+                  {reviewList.map(k => (
+                    <span key={k} className="review-chip">{FIELD_TITLES[k] || k}</span>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
 
           <div className="review-card" role="region" aria-label="Extracted Customer Fields">
 
             <div className="fields-grid">
+              {FIELDS.map(f => {
+                const flagged = review.has(f.key)
+                const inputClass = 'form-input' + (flagged ? ' input-low-confidence' : '')
+                return (
+                  <div
+                    key={f.key}
+                    className={'form-group' + (f.full ? ' field-span-full' : '')}
+                  >
+                    <div className="field-header">
+                      <label className="field-label" htmlFor={f.key}>{f.label}</label>
+                      {flagged && (
+                        <span className="conf-badge conf-low" title="Inferred value — please verify">
+                          Review
+                        </span>
+                      )}
+                    </div>
 
-              {/* 1. Company Name */}
-              <div className="form-group">
-                <label className="field-label" htmlFor="company_name">Company Name</label>
-                <input
-                  id="company_name"
-                  type="text"
-                  className="form-input"
-                  value={formData.company_name}
-                  onChange={e => handleChange('company_name', e.target.value)}
-                />
-              </div>
-
-              {/* 2. Contact Name */}
-              <div className="form-group">
-                <label className="field-label" htmlFor="contact_name">Contact Name</label>
-                <input
-                  id="contact_name"
-                  type="text"
-                  className="form-input"
-                  value={formData.contact_name}
-                  onChange={e => handleChange('contact_name', e.target.value)}
-                />
-              </div>
-
-              {/* 3. Billing Address */}
-              <div className="form-group field-span-full">
-                <label className="field-label" htmlFor="billing_address">Billing Address</label>
-                <input
-                  id="billing_address"
-                  type="text"
-                  className="form-input"
-                  value={formData.billing_address}
-                  onChange={e => handleChange('billing_address', e.target.value)}
-                />
-              </div>
-
-              {/* 4. City */}
-              <div className="form-group">
-                <label className="field-label" htmlFor="city">City</label>
-                <input
-                  id="city"
-                  type="text"
-                  className="form-input"
-                  value={formData.city}
-                  onChange={e => handleChange('city', e.target.value)}
-                />
-              </div>
-
-              {/* 5. State */}
-              <div className="form-group">
-                <label className="field-label" htmlFor="state">State</label>
-                <input
-                  id="state"
-                  type="text"
-                  className="form-input"
-                  value={formData.state}
-                  onChange={e => handleChange('state', e.target.value)}
-                />
-              </div>
-
-              {/* 6. Zip code/Pin code */}
-              <div className="form-group">
-                <label className="field-label" htmlFor="zip_code">Zip code / Pin code</label>
-                <input
-                  id="zip_code"
-                  type="text"
-                  className="form-input"
-                  value={formData.zip_code}
-                  onChange={e => handleChange('zip_code', e.target.value)}
-                />
-              </div>
-
-              {/* 7. Country */}
-              <div className="form-group">
-                <label className="field-label" htmlFor="country">Country</label>
-                <input
-                  id="country"
-                  type="text"
-                  className="form-input"
-                  value={formData.country}
-                  onChange={e => handleChange('country', e.target.value)}
-                />
-              </div>
-
-              {/* 8. GST(ABN,TRN) Registration Certificate */}
-              <div className="form-group">
-                <label className="field-label" htmlFor="gst_registration_number">GST(ABN,TRN) Registration Certificate</label>
-                <input
-                  id="gst_registration_number"
-                  type="text"
-                  className="form-input"
-                  value={formData.gst_registration_number}
-                  onChange={e => handleChange('gst_registration_number', e.target.value)}
-                />
-              </div>
-
-              {/* 9. PAN Card (Company/Individual) */}
-              <div className="form-group">
-                <label className="field-label" htmlFor="pan_number">PAN Card (Company/Individual)</label>
-                <input
-                  id="pan_number"
-                  type="text"
-                  className="form-input"
-                  value={formData.pan_number}
-                  onChange={e => handleChange('pan_number', e.target.value)}
-                />
-              </div>
-
-              {/* 10. Email ID TO */}
-              <div className="form-group">
-                <label className="field-label" htmlFor="email_id_to">Email ID TO</label>
-                <input
-                  id="email_id_to"
-                  type="email"
-                  className="form-input"
-                  value={formData.email_id_to}
-                  onChange={e => handleChange('email_id_to', e.target.value)}
-                />
-              </div>
-
-              {/* 11. Email ID CC */}
-              <div className="form-group">
-                <label className="field-label" htmlFor="email_id_cc">Email ID CC</label>
-                <input
-                  id="email_id_cc"
-                  type="email"
-                  className="form-input"
-                  value={formData.email_id_cc}
-                  onChange={e => handleChange('email_id_cc', e.target.value)}
-                />
-              </div>
-
-              {/* 12. Phone Number */}
-              <div className="form-group">
-                <label className="field-label" htmlFor="phone_number">Phone Number</label>
-                <input
-                  id="phone_number"
-                  type="text"
-                  className="form-input"
-                  value={formData.phone_number}
-                  onChange={e => handleChange('phone_number', e.target.value)}
-                />
-              </div>
-
-              {/* 13. Payment Terms */}
-              <div className="form-group">
-                <label className="field-label" htmlFor="payment_terms">Payment Terms</label>
-                <input
-                  id="payment_terms"
-                  type="text"
-                  className="form-input"
-                  value={formData.payment_terms}
-                  onChange={e => handleChange('payment_terms', e.target.value)}
-                />
-              </div>
-
-              {/* 14. SALESPERSON */}
-              <div className="form-group">
-                <label className="field-label" htmlFor="salesperson">SALESPERSON</label>
-                <input
-                  id="salesperson"
-                  type="text"
-                  className="form-input"
-                  value={formData.salesperson}
-                  onChange={e => handleChange('salesperson', e.target.value)}
-                />
-              </div>
-
-              {/* 15. REGION */}
-              <div className="form-group">
-                <label className="field-label" htmlFor="region">REGION</label>
-                <input
-                  id="region"
-                  type="text"
-                  className="form-input"
-                  value={formData.region}
-                  onChange={e => handleChange('region', e.target.value)}
-                />
-              </div>
-
-              {/* 16. Customer Agreement / Contract / PO / SO */}
-              <div className="form-group field-span-full">
-                <label className="field-label" htmlFor="customer_agreement">Customer Agreement / Contract / Purchase Order / Sale Order</label>
-                <input
-                  id="customer_agreement"
-                  type="text"
-                  className="form-input"
-                  value={formData.customer_agreement}
-                  onChange={e => handleChange('customer_agreement', e.target.value)}
-                />
-              </div>
-
-              {/* 17. Type Dropdown */}
-              <div className="form-group">
-                <label className="field-label" htmlFor="type">Type</label>
-                <select
-                  id="type"
-                  className="form-input"
-                  style={{ cursor: 'pointer', background: 'var(--color-surface)' }}
-                  value={formData.type}
-                  onChange={e => handleChange('type', e.target.value)}
-                >
-                  <option value="Services">Services</option>
-                  <option value="License">License</option>
-                </select>
-              </div>
-
+                    {f.type === 'select' ? (
+                      <select
+                        id={f.key}
+                        className={inputClass}
+                        style={{ cursor: 'pointer', background: 'var(--color-surface)' }}
+                        value={formData[f.key]}
+                        onChange={e => handleChange(f.key, e.target.value)}
+                      >
+                        {f.options.map(o => <option key={o} value={o}>{o}</option>)}
+                      </select>
+                    ) : (
+                      <input
+                        id={f.key}
+                        type={f.type || 'text'}
+                        className={inputClass}
+                        aria-invalid={flagged || undefined}
+                        value={formData[f.key]}
+                        onChange={e => handleChange(f.key, e.target.value)}
+                      />
+                    )}
+                  </div>
+                )
+              })}
             </div>
 
-            {/* 18. Documents Required & Attached Section */}
             {sourceDocs.length > 0 && (
               <div className="attached-docs-card">
                 <div className="attached-docs-info">
