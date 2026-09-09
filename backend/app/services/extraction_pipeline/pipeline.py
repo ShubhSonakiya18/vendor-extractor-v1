@@ -125,15 +125,18 @@ def main() -> int:
     parser.add_argument("--out", default="outputs/run", help="Output directory")
     parser.add_argument("--models", choices=["small", "medium", "tiny"], default="small")
     parser.add_argument(
-        "--backend", choices=["paddleocr", "rapidocr"], default=None,
-        help="OCR backend. Defaults to $OCR_BACKEND, else rapidocr (the active "
-             "engine as of 2026-09-01; paddleocr is the preserved fallback, "
-             "currently disabled -- see ocr_engine.py's PRESERVED FALLBACK banner).",
+        "--backend", choices=["paddleocr", "rapidocr", "rapidocr_openvino"], default=None,
+        help="OCR backend. Defaults to $OCR_BACKEND, else rapidocr_openvino (the "
+             "active engine as of 2026-09-09, ~2.3x faster than plain rapidocr on "
+             "this machine's Intel CPU -- UNVALIDATED on AMD/ARM64, see "
+             "ocr_engine.py's OCR_BACKEND comment; paddleocr is the preserved "
+             "fallback, currently disabled -- see its PRESERVED FALLBACK banner).",
     )
     parser.add_argument(
         "--ocr-tune", action="append", metavar="NAME=VALUE",
         help="Tune a RapidOCR knob, repeatable. e.g. --ocr-tune det_box_thresh=0.3 "
-             "--ocr-tune max_side_len=4000. Ignored by the paddleocr backend. "
+             "--ocr-tune max_side_len=4000. Applies to both rapidocr and "
+             "rapidocr_openvino (shared RapidOCRTuning); ignored by paddleocr. "
              "Composes with any OCR_RAPID_* environment variables.",
     )
     parser.add_argument(
@@ -195,15 +198,19 @@ def main() -> int:
         if args.dpi is None:
             args.dpi = _default_dpi_for(ocr)
 
-        if ocr.backend == "rapidocr":
+        if ocr.backend in ("rapidocr", "rapidocr_openvino"):
             tuning = ocr._rapid_tuning
             print(f"    max_side_len={tuning.max_side_len} "
                   f"text_score={tuning.text_score} use_cls={tuning.use_cls} "
                   f"det_box_thresh={tuning.det_box_thresh} "
-                  f"intra_op={tuning.intra_op_num_threads}")
+                  f"intra_op={tuning.intra_op_num_threads}"
+                  + (f" det_model={tuning.det_model_path}" if ocr.backend == "rapidocr_openvino" else ""))
             # Raising DPI without raising max_side_len in lockstep is the
             # classic way to pay 2x the render cost and measure no gain --
-            # RapidOCR simply downscales the extra pixels away again.
+            # RapidOCR simply downscales the extra pixels away again. Applies
+            # to rapidocr_openvino too -- it shares this exact tuning object,
+            # even though max_side_len itself isn't a kwarg OpenVINO's older
+            # parse_parameters.py reads (see to_rapidocr_openvino_kwargs()).
             needed = int(args.dpi * 11.69) + 1   # A4 long edge, in pixels
             if tuning.max_side_len < needed:
                 print(f"    WARNING: at {args.dpi} DPI an A4 page is ~{needed}px tall, "

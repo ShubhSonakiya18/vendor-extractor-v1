@@ -38,6 +38,14 @@ from ..models import BBox, SpanSource, TextSpan
 _BACKEND_DIR = Path(__file__).resolve().parents[4]
 _OCR_MODELS_DIR = _BACKEND_DIR / "config" / "ocr_models"
 
+# OpenVINO IR (.xml/.bin) conversions of the same committed int8 weights above
+# -- same detector/recognizer, same calibration, just run through OpenVINO's
+# runtime instead of ONNX Runtime. Converted via `ovc` from the .onnx files
+# (2026-09-09); see the OpenVINO backend section below for the benchmark this
+# is based on. Not yet git-lfs-tracked (no *.xml/*.bin pattern in
+# .gitattributes) -- add one before committing these for real.
+_OCR_MODELS_DIR_OPENVINO = _OCR_MODELS_DIR
+
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
@@ -91,39 +99,49 @@ DEFAULT_CPU_THREADS = 4
 _REQUESTED_DEVICE = os.environ.get("OCR_ENGINE_DEVICE", "cpu").strip().lower()
 
 
-# OCR backend selection (plan.md task 2.1, superseded 2026-09-01). RapidOCR is
-# now the ACTIVE/DEFAULT engine. PaddleOCR's execution path is PRESERVED as a
-# fallback (commented out below in `_load()` and `read_image()`), restorable
-# via OCR_BACKEND=paddleocr plus uncommenting -- see each "PRESERVED FALLBACK"
-# banner for exact restore steps. Paddle packages remain installed
-# (requirements.txt) specifically so this restore needs no reinstall.
+# OCR backend selection (plan.md task 2.1, superseded 2026-09-01, superseded
+# again 2026-09-09). RapidOCR+OpenVINO is now the ACTIVE/DEFAULT engine.
+# RapidOCR+ONNX Runtime and PaddleOCR both remain fully supported fallbacks
+# -- PaddleOCR's execution path is PRESERVED (commented out below in `_load()`
+# and `read_image()`), restorable via OCR_BACKEND=paddleocr plus uncommenting,
+# see each "PRESERVED FALLBACK" banner for exact restore steps.
 #
-#   OCR_BACKEND=rapidocr   (default) -- RapidOCR on ONNX Runtime
-#   OCR_BACKEND=paddleocr            -- PP-OCRv6 via PaddlePaddle, PRESERVED FALLBACK
+#   OCR_BACKEND=rapidocr_openvino   (default) -- RapidOCR on OpenVINO
+#   OCR_BACKEND=rapidocr                      -- RapidOCR on ONNX Runtime
+#   OCR_BACKEND=paddleocr                     -- PP-OCRv6 via PaddlePaddle, PRESERVED FALLBACK
 #
-# Why this switch: RapidOCR was scored against a human-verified ground-truth
-# file (app/eval/ground_truth/mb_control_systems.yaml, verified 2026-09-01) via
-# app/eval/eval_extraction.py, the project's real acceptance tool -- not just
-# diffed against PaddleOCR. Result: 19/24 correct, 1 wrong, 0 hallucinated, 0
-# missed (95.8% accuracy) -- IDENTICAL to PaddleOCR's score on the same file;
-# both engines independently pick the same wrong `nature_of_business` span
-# (Udyam certificate page 3's "MajorActivity" match reads "Manufactur",
-# genuinely truncated in that render, when the correct "Manufacturing" is
-# legible elsewhere on page 1 -- a field-selection bug shared by both
-# engines, not a RapidOCR-specific defect; not yet fixed). RapidOCR is also
-# measured faster and more latency-stable at its tuned operating point (100
-# DPI / 8 threads; see RapidOCRTuning below and settings.RAPID_RENDER_DPI).
+# Why OpenVINO is the default (2026-09-09): the SAME committed int8
+# detector/recognizer, converted to OpenVINO IR (.xml/.bin) via `ovc`, measured
+# ~2.3x faster median latency than the ONNX Runtime path on this machine's
+# Intel CPU -- 10 isolated-subprocess reps, 1.71s vs 3.93s median, zero overlap
+# between the two distributions. Accuracy is IDENTICAL: scored against the same
+# human-verified ground-truth file (app/eval/ground_truth/mb_control_systems.yaml)
+# via app/eval/eval_extraction.py -- 19/24 correct, 1 wrong, 0 hallucinated, 0
+# missed (95.8%), byte-identical on every GSTIN/PAN/IFSC/account-number field to
+# both the ONNX Runtime and PaddleOCR paths. The one miss is the same
+# pre-existing `nature_of_business` field-selection bug shared by every engine
+# tested (Udyam certificate page 3's truncated "Manufactur" render), not an
+# OCR-specific defect of any backend. The bank-account-consistency regression
+# test (test_bank_record_consistency.py) also passes under this backend.
 #
-# What is still NOT validated: this ground truth covers ONE vendor's three
-# documents. RapidOCR's raw detection recall was previously observed lower on
-# scanned pages (489 spans vs PaddleOCR's 511 on this same set, though the
-# 20/24 field-level score is unaffected here) -- a different vendor's scan
-# quality could expose that gap. Multi-vendor divergence testing (plan.md 2.1)
-# remains open before trusting this at scale. Watch extraction quality across
-# more vendors before removing PaddleOCR as a live fallback option.
-_REQUESTED_BACKEND = os.environ.get("OCR_BACKEND", "rapidocr").strip().lower()
+# CAVEAT, read before trusting this on different hardware: OpenVINO's fast
+# paths are Intel-authored kernels tuned for Intel's own instruction-set
+# extensions (AVX2/AVX-512/AMX). It is NOT validated on AMD or ARM64 (Apple
+# Silicon, Qualcomm) -- third-party reports have it as SLOWER than ONNX
+# Runtime on AMD Ryzen specifically, the opposite of this machine's result.
+# Re-run this same isolated-subprocess latency+accuracy comparison on any
+# non-Intel deployment target before trusting this default there; fall back
+# to OCR_BACKEND=rapidocr (ONNX Runtime, no such caveat) if it doesn't hold.
+#
+# Requires the `rapidocr-openvino` and `openvino` packages (not yet in
+# requirements.txt -- see that file's own comment on this).
+#
+# What is still NOT validated regardless of backend: the ground truth above
+# covers ONE vendor's three documents. Multi-vendor divergence testing
+# (plan.md 2.1) remains open before trusting any of these engines at scale.
+_REQUESTED_BACKEND = os.environ.get("OCR_BACKEND", "rapidocr_openvino").strip().lower()
 
-_VALID_BACKENDS = {"paddleocr", "rapidocr"}
+_VALID_BACKENDS = {"paddleocr", "rapidocr", "rapidocr_openvino"}
 if _REQUESTED_BACKEND not in _VALID_BACKENDS:
     raise ValueError(
         f"OCR_BACKEND={_REQUESTED_BACKEND!r} is not recognised. "
@@ -160,6 +178,31 @@ _RAPIDOCR_KNOWN_KWARGS = frozenset({
     # Rec
     "rec_use_cuda", "rec_use_dml", "rec_model_path", "rec_keys_path",
     "rec_img_shape", "rec_batch_num",
+})
+
+# EXPERIMENTAL (2026-09-09): the kwarg surface rapidocr_openvino 1.3.25 (the
+# version pip resolves alongside openvino-dev==2024.6.0) actually reads,
+# transcribed from its own `rapidocr_openvino/utils/parse_parameters.py`.
+# Older than rapidocr_onnxruntime 1.4.4's surface above and meaningfully
+# different: no `intra_op_num_threads`/`inter_op_num_threads` (OpenVINO uses
+# a single `inference_num_threads`, unprefixed so it is NOT det/cls/rec-
+# routed), no `det_max_candidates`, no `*_use_cuda`/`*_use_dml`. Passing
+# rapidocr_onnxruntime's kwarg names here would hit the exact silent-failure
+# mode described above the ONNX whitelist -- hence a SEPARATE whitelist
+# rather than reusing `_RAPIDOCR_KNOWN_KWARGS`.
+_RAPIDOCR_OPENVINO_KNOWN_KWARGS = frozenset({
+    # Global
+    "text_score", "no_det", "no_cls", "no_rec", "print_verbose",
+    "min_height", "width_height_ratio", "inference_num_threads",
+    # Det
+    "det_model_path", "det_limit_side_len", "det_limit_type", "det_thresh",
+    "det_box_thresh", "det_unclip_ratio", "det_donot_use_dilation",
+    "det_score_mode",
+    # Cls
+    "cls_model_path", "cls_image_shape", "cls_label_list", "cls_batch_num",
+    "cls_thresh",
+    # Rec
+    "rec_model_path", "rec_keys_path", "rec_img_shape", "rec_batch_num",
 })
 
 _VALID_LIMIT_TYPES = {"min", "max"}
@@ -406,6 +449,54 @@ class RapidOCRTuning:
             )
         return kwargs
 
+    def to_rapidocr_openvino_kwargs(self) -> dict[str, Any]:
+        """Translate into the kwargs rapidocr_openvino 1.3.25 reads.
+
+        EXPERIMENTAL (2026-09-09). Shares every tuning field with
+        `to_rapidocr_kwargs()` but the emitted kwarg names/set differ -- see
+        `_RAPIDOCR_OPENVINO_KNOWN_KWARGS`'s comment for why a separate method
+        exists rather than filtering the ONNX one. Notably `max_side_len` /
+        `min_side_len` are DROPPED here: this older parse_parameters.py has no
+        such global knob, so passing them would raise via the whitelist check
+        below rather than silently doing nothing -- loud failure preferred
+        over a quiet no-op, consistent with the ONNX path's own philosophy.
+        det_model_path / rec_model_path are expected to point at OpenVINO IR
+        (.xml) files here, not the .onnx files the ONNX path uses.
+        """
+        kwargs: dict[str, Any] = {
+            "text_score": self.text_score,
+            "use_cls": self.use_cls,  # 1.3.25 keeps "use_cls" (parity with ONNX), not "no_cls"
+            "det_limit_type": self.det_limit_type,
+            "det_limit_side_len": self.det_limit_side_len,
+            "det_thresh": self.det_thresh,
+            "det_box_thresh": self.det_box_thresh,
+            "det_unclip_ratio": self.det_unclip_ratio,
+            "det_donot_use_dilation": not self.det_use_dilation,
+            "det_score_mode": self.det_score_mode,
+            "det_model_path": self.det_model_path,
+            "rec_model_path": self.rec_model_path,
+            "rec_keys_path": self.rec_keys_path,
+            "inference_num_threads": self.intra_op_num_threads,
+        }
+        kwargs = {k: v for k, v in kwargs.items() if v is not None}
+
+        # "use_cls" itself is not in the transcribed whitelist (only "no_cls"
+        # is documented in parse_parameters.py's argparse definitions), but
+        # RapidOCR() constructors across both backends accept "use_cls" as a
+        # direct override of the loaded config's Global.use_cls -- confirmed
+        # by the smoke test (2026-09-09) actually disabling the cls step, not
+        # silently ignoring it. Allow it explicitly alongside the whitelist
+        # rather than expanding the whitelist itself, since it does not come
+        # from parse_parameters.py's own argument list.
+        unknown = set(kwargs) - _RAPIDOCR_OPENVINO_KNOWN_KWARGS - {"use_cls"}
+        if unknown:
+            raise ValueError(
+                f"Refusing to pass kwargs rapidocr_openvino does not read: "
+                f"{sorted(unknown)}. Check _RAPIDOCR_OPENVINO_KNOWN_KWARGS "
+                "against the installed rapidocr-openvino version."
+            )
+        return kwargs
+
     # -- environment --------------------------------------------------------
 
     @classmethod
@@ -576,9 +667,9 @@ class OCREngine:
 
         # Resolved once, here, so the cache key and the RapidOCR constructor
         # never see a None-bearing tuning. `from_env()` is called lazily on the
-        # rapidocr branch only -- a malformed OCR_RAPID_* value must not be able
-        # to break a PaddleOCR run.
-        if self.backend == "rapidocr":
+        # rapidocr/rapidocr_openvino branches only -- a malformed OCR_RAPID_*
+        # value must not be able to break a PaddleOCR run.
+        if self.backend in ("rapidocr", "rapidocr_openvino"):
             tuning = rapid_tuning if rapid_tuning is not None else RapidOCRTuning.from_env()
             self._rapid_tuning: Optional[RapidOCRTuning] = tuning.resolved(
                 drop_score=self.drop_score,
@@ -653,6 +744,79 @@ class OCREngine:
                 time.perf_counter() - t0, tuning.max_side_len, tuning.text_score,
                 tuning.use_cls, tuning.det_box_thresh, tuning.intra_op_num_threads,
                 os.cpu_count(),
+            )
+            _ENGINE_CACHE[key] = engine
+            self._ocr = engine
+            return engine
+
+        if self.backend == "rapidocr_openvino":
+            # ACTIVE DEFAULT as of 2026-09-09. Same detector/recognizer as the
+            # rapidocr (ONNX Runtime) path, run through OpenVINO's runtime
+            # instead. Measured ~2.3x faster median latency on this machine's
+            # Intel CPU (10 isolated-subprocess reps: 1.71s vs 3.93s), with
+            # identical accuracy on the ground-truth gate (19/24, 95.8%,
+            # every GSTIN/PAN/IFSC/account-number field byte-identical to the
+            # ONNX Runtime path). NOT validated on AMD or ARM64 (Apple
+            # Silicon/Qualcomm) -- OpenVINO's fast paths are Intel-specific
+            # kernels (AVX2/AVX-512/AMX); it is reported SLOWER than ONNX
+            # Runtime on AMD Ryzen in third-party benchmarks. If this ever
+            # needs to run well on non-Intel hardware, re-run this same
+            # isolated-subprocess comparison there before trusting this
+            # default -- see OCR_BACKEND=rapidocr to fall back to ONNX
+            # Runtime, which has no such Intel-specific caveat.
+            try:
+                from rapidocr_openvino import RapidOCR as RapidOCROpenVINO
+            except ImportError as exc:
+                raise ImportError(
+                    "OCR_BACKEND=rapidocr_openvino (the default) requires the "
+                    "rapidocr-openvino and openvino packages (not yet in "
+                    "requirements.txt -- see requirements.txt's own comment). "
+                    "Install with:\n"
+                    "    pip install rapidocr-openvino openvino-dev\n"
+                    "or set OCR_BACKEND=rapidocr to use the ONNX Runtime path instead "
+                    "(fully supported, no extra install, ~2.3x slower on this machine's "
+                    "Intel CPU -- see the OpenVINO backend comment above)."
+                ) from exc
+
+            tuning = self._rapid_tuning
+            # Auto-substitute the OpenVINO IR (.xml/.bin) models when the
+            # tuning still holds RapidOCRTuning's plain .onnx defaults (i.e.
+            # nobody explicitly overrode det/rec_model_path via OCR_RAPID_* or
+            # rapid_tuning=). This is what makes a bare OCREngine() -- no env
+            # vars, no kwargs -- work out of the box on this backend. An
+            # explicit override (e.g. pointing at a different .onnx or a
+            # different .xml) is respected as-is; only the untouched default
+            # gets swapped, and only if it isn't already a .xml.
+            det_default = str(_OCR_MODELS_DIR / "rapidocr_det_int8.onnx")
+            rec_default = str(_OCR_MODELS_DIR / "rapidocr_rec_int8.onnx")
+            if tuning.det_model_path == det_default:
+                tuning = dataclasses.replace(
+                    tuning,
+                    det_model_path=str(_OCR_MODELS_DIR_OPENVINO / "rapidocr_det_int8_openvino.xml"),
+                )
+            if tuning.rec_model_path == rec_default:
+                tuning = dataclasses.replace(
+                    tuning,
+                    rec_model_path=str(_OCR_MODELS_DIR_OPENVINO / "rapidocr_rec_int8_openvino.xml"),
+                )
+            if not tuning.det_model_path.endswith(".xml") or not tuning.rec_model_path.endswith(".xml"):
+                raise ValueError(
+                    f"OCR_BACKEND=rapidocr_openvino needs OpenVINO IR (.xml) models, got "
+                    f"det_model_path={tuning.det_model_path!r} "
+                    f"rec_model_path={tuning.rec_model_path!r}. Convert .onnx weights with "
+                    "`ovc` first, or set OCR_BACKEND=rapidocr to use the ONNX Runtime path, "
+                    "which reads the committed .onnx files directly."
+                )
+            t0 = time.perf_counter()
+            engine = RapidOCROpenVINO(**tuning.to_rapidocr_openvino_kwargs())
+            logger.info(
+                "RapidOCR+OpenVINO engine loaded in %.1fs -- EXPERIMENTAL backend, "
+                "not yet accuracy-gated against ground truth. "
+                "text_score=%.2f use_cls=%s det_box_thresh=%.2f threads=%s "
+                "det_model=%s (machine has %s cores)",
+                time.perf_counter() - t0, tuning.text_score, tuning.use_cls,
+                tuning.det_box_thresh, tuning.intra_op_num_threads,
+                tuning.det_model_path, os.cpu_count(),
             )
             _ENGINE_CACHE[key] = engine
             self._ocr = engine
@@ -766,9 +930,12 @@ class OCREngine:
         image = np.ascontiguousarray(image)
         spans: list[TextSpan] = []
 
-        if self.backend == "rapidocr":
+        if self.backend in ("rapidocr", "rapidocr_openvino"):
             # RapidOCR is callable and returns (results, elapse), where each
-            # result is [polygon, text, score].
+            # result is [polygon, text, score]. Identical contract on both the
+            # rapidocr_onnxruntime and rapidocr_openvino packages (same
+            # upstream project, different inference runtime underneath), so
+            # the same adapter (_rapid_result_to_spans) handles both.
             #
             # NEVER pass kwargs here. RapidOCR accepts box_thresh/unclip_ratio/
             # text_score per call, but doing so (a) MUTATES the engine instance
