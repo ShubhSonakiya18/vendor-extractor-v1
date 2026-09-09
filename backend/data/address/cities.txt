@@ -1,0 +1,769 @@
+# City / district names, casefolded, one per line. Built from the
+# PIN directory's district column + a curated common-city alias list.
+24 paraganas north
+24 paraganas south
+adilabad
+agar malwa
+agra
+ahmadabad
+ahmednagar
+aizawl
+ajmer
+akola
+alappuzha
+aligarh
+alipurduar
+alirajpur
+allahabad
+alluri sitharama raju
+almora
+alwar
+ambala
+ambedkar nagar
+amethi
+amravati
+amreli
+amritsar
+amroha
+anakapalli
+anand
+anantapur
+anantnag
+anjaw
+annamayya
+anugul
+anuppur
+araria
+ariyalur
+arvalli
+arwal
+ashoknagar
+auraiya
+aurangabad
+ayodhya
+azamgarh
+bagalkot
+bageshwar
+baghpat
+bahraich
+bajali
+baksa
+balaghat
+balangir
+baleshwar
+ballari
+ballia
+balod
+baloda bazar
+balrampur
+banas kantha
+banda
+bandipora
+bangalore
+banka
+bankura
+banswara
+bapatla
+barabanki
+baramulla
+baran
+bareilly
+bargarh
+barmer
+barnala
+baroda
+barpeta
+barwani
+bastar
+basti
+bathinda
+beed
+begusarai
+belagavi
+bemetara
+bengaluru
+bengaluru rural
+bengaluru urban
+betul
+bhadohi
+bhadradri kothagudem
+bhadrak
+bhagalpur
+bhandara
+bharatpur
+bharuch
+bhavnagar
+bhilwara
+bhind
+bhiwani
+bhojpur
+bhopal
+bhubaneswar
+bidar
+bijapur
+bijnor
+bikaner
+bilaspur
+birbhum
+bishnupur
+biswanath
+bokaro
+bombay
+bongaigaon
+botad
+boudh
+budaun
+budgam
+bulandshahr
+buldhana
+bundi
+burhanpur
+buxar
+cachar
+calcutta
+central
+chamarajanagara
+chamba
+chamoli
+champawat
+champhai
+chandauli
+chandel
+chandigarh
+chandrapur
+changlang
+charaideo
+charki dadri
+chatra
+chengalpattu
+chennai
+chhatarpur
+chhindwara
+chhotaudepur
+chikkaballapura
+chikkamagaluru
+chirang
+chitradurga
+chitrakoot
+chittoor
+chittorgarh
+churachandpur
+churu
+cochin
+coimbatore
+coochbehar
+cuddalore
+cuttack
+dadra and nagar haveli
+dakshina kannada
+daman
+damoh
+dang
+dantewada
+darbhanga
+darjeeling
+darrang
+datia
+dausa
+davangere
+dehradun
+delhi
+deogarh
+deoghar
+deoria
+devbhumi dwarka
+dewas
+dhalai
+dhamtari
+dhanbad
+dhar
+dharmapuri
+dharwad
+dhemaji
+dhenkanal
+dholpur
+dhubri
+dhule
+dibang valley
+dibrugarh
+dima hasao
+dimapur
+dinajpur dakshin
+dinajpur uttar
+dindigul
+dindori
+diu
+doda
+dohad
+dumka
+dungarpur
+durg
+east
+east district
+east garo hills
+east godavari
+east jaintia hills
+east kameng
+east khasi hills
+east nimar
+east siang
+east singhbum
+eluru
+ernakulam
+erode
+etah
+etawah
+faridabad
+faridkot
+farrukhabad
+fatehabad
+fatehgarh sahib
+fatehpur
+fazilka
+firozabad
+firozepur
+gadag
+gadchiroli
+gajapati
+ganderbal
+gandhinagar
+ganganagar
+ganjam
+garhwa
+gariyaband
+gaurella pendra marwahi
+gautam buddha nagar
+gaya
+ghaziabad
+ghazipur
+gir somnath
+giridih
+goalpara
+godda
+golaghat
+gomati
+gonda
+gondia
+gopalganj
+gorakhpur
+greater noida
+gumla
+guna
+guntur
+gurdaspur
+gurgaon
+gurugram
+guwahati
+gwalior
+hailakandi
+hamirpur
+hanumakonda
+hanumangarh
+hapur
+harda
+hardoi
+haridwar
+hassan
+hathras
+haveri
+hazaribagh
+hingoli
+hisar
+hnahthial
+hojai
+hooghly
+hoshangabad
+hoshiarpur
+howrah
+hyderabad
+idukki
+imphal east
+imphal west
+indore
+jabalpur
+jagatsinghapur
+jagitial
+jaipur
+jaisalmer
+jajapur
+jalandhar
+jalaun
+jalgaon
+jalna
+jalore
+jalpaiguri
+jammu
+jamnagar
+jamtara
+jamui
+jangoan
+janjgir-champa
+jashpur
+jaunpur
+jayashankar bhupalapally
+jehanabad
+jhabua
+jhajjar
+jhalawar
+jhansi
+jhargram
+jharsuguda
+jhunjhunu
+jind
+jiribam
+jodhpur
+jogulamba gadwal
+jorhat
+junagadh
+kabirdham
+kachchh
+kaimur (bhabua)
+kaithal
+kakching
+kakinada
+kalaburagi
+kalahandi
+kalimpong
+kallakurichi
+kamareddy
+kamjong
+kamrup
+kamrup metro
+kanchipuram
+kandhamal
+kangpokpi
+kangra
+kanker
+kannauj
+kanniyakumari
+kannur
+kanpur
+kanpur dehat
+kanpur nagar
+kapurthala
+karaikal
+karauli
+karbi anglong
+kargil
+karimganj
+karimnagar
+karnal
+karur
+kasaragod
+kasganj
+kathua
+katihar
+katni
+kaushambi
+kendrapara
+kendujhar
+khagaria
+khammam
+khargone
+khawzawl
+kheda
+kheri
+khordha
+khowai
+khunti
+kinnaur
+kiphire
+kishanganj
+kishtwar
+kochi
+kodagu
+koderma
+kohima
+kokrajhar
+kolar
+kolasib
+kolhapur
+kolkata
+kollam
+konaseema
+kondagaon
+koppal
+koraput
+korba
+korea
+kota
+kottayam
+kozhikode
+krishna
+krishnagiri
+kulgam
+kullu
+kumuram bheem asifabad
+kupwara
+kurnool
+kurukshetra
+kurung kumey
+kushi nagar
+lahul and spiti
+lakhimpur
+lakhisarai
+lakshadweep district
+lalitpur
+latehar
+latur
+lawngtlai
+leh ladakh
+leparada
+lohardaga
+lohit
+longding
+longleng
+lower siang
+lower subansiri
+lucknow
+ludhiana
+lunglei
+madhepura
+madhubani
+madras
+madurai
+mahabubabad
+mahabubnagar
+maharajganj
+mahasamund
+mahe
+mahendragarh
+mahesana
+mahisagar
+mahoba
+mainpuri
+majuli
+malappuram
+maldah
+malerkotla
+malkangiri
+mamit
+mancherial
+mandi
+mandla
+mandsaur
+mandya
+mansa
+marigaon
+mathura
+mau
+mayiladuthurai
+mayurbhanj
+medak
+medchal malkajgiri
+medinipur east
+medinipur west
+meerut
+mirzapur
+moga
+mohali
+mokokchung
+mon
+moradabad
+morbi
+morena
+mulugu
+mumbai
+mumbai suburban
+mungeli
+munger
+murshidabad
+muzaffarnagar
+muzaffarpur
+mysuru
+nabarangpur
+nadia
+nagaon
+nagapattinam
+nagarkurnool
+nagaur
+nagpur
+nainital
+nalanda
+nalbari
+nalgonda
+namakkal
+namsai
+nanded
+nandurbar
+nandyal
+narayanpet
+narayanpur
+narmada
+narsinghpur
+nashik
+navi mumbai
+navsari
+nawada
+nayagarh
+neemuch
+new delhi
+nicobars
+nirmal
+niwari
+nizamabad
+noida
+noney
+north
+north and middle andaman
+north district
+north east
+north garo hills
+north goa
+north tripura
+north west
+ntr
+nuapada
+nuh
+osmanabad
+pakke kessang
+pakur
+pakyong
+palakkad
+palamu
+palghar
+pali
+palnadu
+palwal
+panch mahals
+panchkula
+panipat
+panna
+papum pare
+parbhani
+parvathipuram manyam
+paschim bardhaman
+pashchim champaran
+patan
+pathanamthitta
+pathankot
+patiala
+patna
+pauri garhwal
+peddapalli
+perambalur
+peren
+phek
+pherzawl
+pilibhit
+pithoragarh
+pondicherry
+poona
+poonch
+porbandar
+prakasam
+pratapgarh
+prayagraj
+puducherry
+pudukkottai
+pulwama
+pune
+purba bardhaman
+purbi champaran
+puri
+purnia
+purulia
+rae bareli
+raichur
+raigad
+raigarh
+raipur
+raisen
+rajanna sircilla
+rajgarh
+rajkot
+rajnandgaon
+rajouri
+rajsamand
+ramanagara
+ramanathapuram
+ramban
+ramgarh
+rampur
+ranchi
+ranga reddy
+ranipet
+ratlam
+ratnagiri
+rayagada
+reasi
+rewa
+rewari
+ri bhoi
+rohtak
+rohtas
+rudra prayag
+rupnagar
+s.a.s nagar
+sabar kantha
+sagar
+saharanpur
+saharsa
+sahebganj
+saitual
+salem
+samastipur
+samba
+sambalpur
+sambhal
+sangareddy
+sangli
+sangrur
+sant kabeer nagar
+saraikela kharsawan
+saran
+sas nagar
+satara
+satna
+sawai madhopur
+secunderabad
+sehore
+senapati
+seoni
+sepahijala
+serchhip
+shahdara
+shahdol
+shahid bhagat singh nagar
+shahjahanpur
+shajapur
+shamli
+sheikhpura
+sheohar
+sheopur
+shi yomi
+shimla
+shivamogga
+shivpuri
+shopian
+shravasti
+siddharth nagar
+siddipet
+sidhi
+sikar
+simdega
+sindhudurg
+singrauli
+sirmaur
+sirohi
+sirsa
+sitamarhi
+sitapur
+sivaganga
+sivasagar
+siwan
+solan
+solapur
+sonbhadra
+sonepur
+sonipat
+sonitpur
+south
+south andamans
+south district
+south east
+south garo hills
+south goa
+south salmara mancachar
+south tripura
+south west
+south west garo hills
+south west khasi hills
+spsr nellore
+sri muktsar sahib
+sri sathya sai
+srikakulam
+srinagar
+sukma
+sultanpur
+sundargarh
+supaul
+surajpur
+surat
+surendranagar
+surguja
+suryapet
+tamenglong
+tapi
+tarn taran
+tawang
+tehri garhwal
+tengnoupal
+tenkasi
+thane
+thanjavur
+the nilgiris
+theni
+thiruvallur
+thiruvananthapuram
+thiruvarur
+thoubal
+thrissur
+tikamgarh
+tinsukia
+tirap
+tiruchirappalli
+tirunelveli
+tirupathur
+tirupati
+tiruppur
+tiruvannamalai
+tonk
+trivandrum
+tuensang
+tumakuru
+tuticorin
+udaipur
+udalguri
+udam singh nagar
+udhampur
+udupi
+ujjain
+ukhrul
+umaria
+una
+unakoti
+unnao
+upper siang
+upper subansiri
+uttar kashi
+uttara kannada
+vadodara
+vaishali
+valsad
+varanasi
+vellore
+vidisha
+vijayapura
+vijayawada
+vijaynagar
+vikarabad
+villupuram
+virudhunagar
+visakhapatanam
+visakhapatnam
+vizag
+vizianagaram
+wanaparthy
+warangal
+wardha
+washim
+wayanad
+west
+west district
+west garo hills
+west godavari
+west jaintia hills
+west kameng
+west karbi anglong
+west khasi hills
+west siang
+west singhbhum
+west tripura
+wokha
+y.s.r.
+yadadri bhuvanagiri
+yadgir
+yamunanagar
+yavatmal
+zunheboto

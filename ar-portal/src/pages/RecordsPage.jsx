@@ -72,6 +72,7 @@ export default function RecordsPage() {
                 <thead>
                   <tr>
                     <th>#</th>
+                    <th>BC No.</th>
                     <th>Name</th>
                     <th>GSTIN</th>
                     <th>BC Status</th>
@@ -86,6 +87,7 @@ export default function RecordsPage() {
                       onClick={() => navigate(`/records/${kind}/${r.id}`)}
                     >
                       <td>{r.id}</td>
+                      <td>{r.bc_no || '—'}</td>
                       <td>{r[cfg.nameKey] || '—'}</td>
                       <td>{r[cfg.gstKey] || '—'}</td>
                       <td>

@@ -43,6 +43,12 @@ venv/
 !.env.example
 !.env.*.example
 
+# Address lookups: the generated tables under backend/data/address/ ARE
+# committed (they're the runtime input). Source CSVs used to build them are
+# large and not ours to redistribute -- keep those local.
+backend/data/address/*_source.csv
+india_10000_unique_synthetic_addresses*.csv
+
 # Node / React
 node_modules/
 dist/

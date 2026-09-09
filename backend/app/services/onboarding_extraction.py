@@ -55,6 +55,7 @@ def process(documents: list[UploadFile]) -> dict:
     from .extraction_pipeline.ingest.ocr_engine import OCREngine
     from .extraction_pipeline.pipeline import extract_from_document_set
 
+    started_at = time.perf_counter()
     run_id = run_state.new_run_id()
     upload_dir = UPLOAD_DIR / run_id
     upload_dir.mkdir(parents=True, exist_ok=True)
@@ -83,8 +84,16 @@ def process(documents: list[UploadFile]) -> dict:
             detail="Supported types are PDF, PNG, JPG, TIFF, BMP and WEBP.",
         )
 
+    load_seconds = time.perf_counter() - t0
     result = extract_from_document_set(doc_set)
     onboarding = to_onboarding_schema(result)
+    # Same shape /extract returns, so CustomerReviewPage can show the timing
+    # pill the vendor VendorComparePage already does.
+    onboarding["timings"] = {
+        "load": round(load_seconds, 1),
+        "extract": round(result.duration_s, 2),
+        "total": round(time.perf_counter() - started_at, 1),
+    }
 
     run_dir = OUTPUT_DIR / run_id
     run_dir.mkdir(parents=True, exist_ok=True)

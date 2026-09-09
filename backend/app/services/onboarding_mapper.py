@@ -99,6 +99,21 @@ _CAPTION_LEAD_WORDS = {
 # label) is treated as a real answer instead.
 _MAX_CAPTION_LEAD_WORDS = 8
 
+# On a Udyam certificate the "Type of Enterprise" table (Classification Year /
+# Enterprise Type / Classification Date) sits directly under "Name of
+# Enterprise". "Enterprise Type" fuzzy-matches vendor_name's "Name of
+# Enterprise" label closely enough that the classification cell -- the single
+# word "Small" (or "Micro" / "Medium") -- gets generated as a vendor_name
+# candidate. A company's legal name is never just that word, so reject it
+# outright the same way a caption leak is. Kept separate from
+# _CAPTION_LEAD_WORDS because these are cell *values*, not caption lead words,
+# and the match must be the whole value, not just its first word.
+_MSME_CLASS_VALUES = {
+    "micro", "small", "medium",
+    "micro enterprise", "small enterprise", "medium enterprise",
+    "micro enterprises", "small enterprises", "medium enterprises",
+}
+
 
 @lru_cache(maxsize=1)
 def _all_dictionary_labels() -> tuple[str, ...]:
@@ -128,17 +143,23 @@ def _all_dictionary_labels() -> tuple[str, ...]:
 
 
 def _is_caption_leak(value: str) -> bool:
-    """True when `value` looks like a form's own printed caption rather than
-    an answer it holds. Three independent checks, any one of which is enough:
+    """True when `value` looks like a form's own printed caption (or a stray
+    table cell) rather than an answer it holds. Any one check is enough:
 
     1. A known "...if any" caption suffix.
-    2. Its first word is one of _CAPTION_LEAD_WORDS and it's caption-length --
+    2. The whole value is an MSME classification word ("Small" / "Micro" /
+       "Medium") -- a Udyam certificate's "Enterprise Type" column leaking in
+       under vendor_name's "Name of Enterprise" label. Never a legal name.
+    3. Its first word is one of _CAPTION_LEAD_WORDS and it's caption-length --
        catches any statutory-certificate caption, whether or not
        field_dictionary.yaml has a field for it at all (see that set's
        docstring for why this is the one that generalises).
-    3. A close (including truncated, e.g. OCR line-wrap dropping "Business"
+    4. A close (including truncated, e.g. OCR line-wrap dropping "Business"
        off the end of "Address of Principal Place of Business") match against
        any label actually configured in field_dictionary.yaml.
+
+    Only reached for vendor_name (via _best_text_value), so scoping the MSME
+    check here does not affect any other field.
     """
     from .extraction_pipeline.extract.normalizer import clean_label
 
@@ -146,6 +167,8 @@ def _is_caption_leak(value: str) -> bool:
     if not v:
         return False
     if _CAPTION_SUFFIX_RE.search(v):
+        return True
+    if clean_label(v) in _MSME_CLASS_VALUES:
         return True
 
     cleaned = clean_label(v)
@@ -166,24 +189,11 @@ def _is_caption_leak(value: str) -> bool:
     return False
 
 
-# Indian states/UTs, mirroring validation_rules.yaml's `indian_state` enum --
-# duplicated (rather than loaded from there) because this list is only used
-# here to recognise a state name sitting at the tail of a combined address
-# string, a different job from validating an already-isolated state field.
-_INDIAN_STATES = {
-    s.casefold() for s in (
-        "Andhra Pradesh", "Arunachal Pradesh", "Assam", "Bihar", "Chhattisgarh",
-        "Goa", "Gujarat", "Haryana", "Himachal Pradesh", "Jharkhand", "Karnataka",
-        "Kerala", "Madhya Pradesh", "Maharashtra", "Manipur", "Meghalaya",
-        "Mizoram", "Nagaland", "Odisha", "Punjab", "Rajasthan", "Sikkim",
-        "Tamil Nadu", "Telangana", "Tripura", "Uttar Pradesh", "Uttarakhand",
-        "West Bengal", "Andaman and Nicobar Islands", "Chandigarh",
-        "Dadra and Nagar Haveli and Daman and Diu", "Delhi",
-        "Jammu and Kashmir", "Ladakh", "Lakshadweep", "Puducherry",
-    )
-}
-
-_PIN_RE = re.compile(r"^[1-9][0-9]{5}$")
+# The Indian-states set and PIN regex that used to live here (for peeling a
+# trailing "city, state, pin" off a combined address) moved into
+# extraction_pipeline.extract.address_resolver, which _split_trailing_location
+# now delegates to -- one segmentation implementation shared by the customer
+# and vendor flows.
 
 # Reverse map: canonical field key -> the onboarding field name it feeds, used
 # only to translate needs_review entries so a flag on "gst_number" is reported
@@ -250,38 +260,25 @@ def _best_text_value(result: ExtractionResult, key: str, review: list[str], revi
 
 
 def _split_trailing_location(address: str) -> tuple[str, str, str, str]:
-    """Peel a trailing ", <city>, <state>[, <pincode>]" off a combined,
-    comma-separated address string.
+    """Segment a combined, caption-less address string into
+    (remaining_address, city, state, pin_code).
 
     Only exists to backfill city/state/pin_code from a document that prints
     them as one address line with no separate City/State caption to match
     against -- a GST REG-06 certificate's "Address of Principal Place of
     Business" (e.g. "...IT PARK, SAS Nagar, Punjab, 160068") is exactly this
-    shape. State is matched against the same Indian-states list
-    validation_rules.yaml's `indian_state` validator uses; city is only taken
-    when a state was actually found immediately after it, since a bare
-    trailing comma-segment with no state to anchor it is too easily some
-    other part of the address, not a city.
+    shape.
 
-    Returns (remaining_address, city, state, pin_code); any of the three may
-    come back "" if that piece wasn't found. `remaining_address` is the input
-    with whatever was matched removed from the tail.
+    Delegates to extraction_pipeline.extract.address_resolver, the shared
+    Phase 2 module: PIN-directory lookup (fixes an OCR-misspelled state,
+    supplies a missing one), data-file state list, and district-aware city
+    selection. This thin wrapper keeps the old 4-tuple contract so
+    `_location_fields` below is unchanged. Any of the three values may still
+    come back "" when that piece isn't in the string.
     """
-    parts = [p.strip() for p in address.split(",") if p.strip()]
+    from .extraction_pipeline.extract.address_resolver import split_trailing_location
 
-    pin = ""
-    if parts and _PIN_RE.match(parts[-1]):
-        pin = parts.pop()
-
-    state = ""
-    if parts and parts[-1].casefold() in _INDIAN_STATES:
-        state = parts.pop()
-
-    city = ""
-    if state and parts:
-        city = parts.pop()
-
-    return ", ".join(parts), city, state, pin
+    return split_trailing_location(address)
 
 
 def _billing_address(result: ExtractionResult) -> str:

@@ -196,3 +196,38 @@ class TestPanFallbackFromGstin:
         out = to_onboarding_schema(_result({"gst_number": ("19AAAAA0000A1Z5EXTRA", "invalid")}))
         assert out["pan_number"] == ""
         assert "pan_number" not in out["fields_needing_review"]
+
+
+class TestMsmeClassLeakRejectedForCompanyName:
+    """A Udyam certificate's "Enterprise Type" column (the lone word "Small" /
+    "Micro" / "Medium") fuzzy-matches vendor_name's "Name of Enterprise" label
+    and gets generated as a candidate. It must never become company_name."""
+
+    def _result_with_alternatives(self, top_value, alt_values):
+        r = ExtractionResult()
+        fr = FieldResult(key="vendor_name", value=top_value, confidence=1.0,
+                         validation_status="valid")
+        fr.alternatives = [{"value": v} for v in alt_values]
+        r.fields["vendor_name"] = fr
+        return r
+
+    def test_small_as_top_pick_falls_through_to_the_real_name(self):
+        out = to_onboarding_schema(
+            self._result_with_alternatives("Small", ["M B CONTROL & SYSTEMS PVT LTD"])
+        )
+        assert out["company_name"] == "M B CONTROL & SYSTEMS PVT LTD"
+        # taking a fallback alternative is itself flagged for a human check
+        assert "company_name" in out["fields_needing_review"]
+
+    def test_all_candidates_junk_yields_empty_not_small(self):
+        out = to_onboarding_schema(
+            self._result_with_alternatives("Small", ["Micro", "Medium Enterprise"])
+        )
+        assert out["company_name"] == ""
+
+    def test_a_real_name_that_merely_starts_with_small_is_kept(self):
+        out = to_onboarding_schema(
+            self._result_with_alternatives("Smallcap Traders Pvt Ltd", [])
+        )
+        assert out["company_name"] == "Smallcap Traders Pvt Ltd"
+        assert "company_name" not in out["fields_needing_review"]

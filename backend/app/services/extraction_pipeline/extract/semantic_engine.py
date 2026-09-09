@@ -30,6 +30,27 @@ from .validator import Validator
 # read as second-class in the report.
 DERIVED_VALUE_CONFIDENCE = 0.40
 
+# A Udyam certificate's "Type of Enterprise" table (column header "Enterprise
+# Type") sits under "Name of Enterprise"; the classification cell -- the lone
+# word "Small" / "Micro" / "Medium" -- fuzzy-matches close enough to be
+# generated as a vendor_name candidate. It is never a company name, so it must
+# not be compared as one in the cross-document consistency check (step 4) --
+# otherwise "GST cert says <real name>, Udyam says SMALL" reads as a document
+# disagreement. onboarding_mapper._is_caption_leak rejects the same values on
+# the value-selection side.
+_JUNK_VENDOR_NAMES = {
+    "micro", "small", "medium",
+    "micro enterprise", "small enterprise", "medium enterprise",
+    "micro enterprises", "small enterprises", "medium enterprises",
+}
+
+
+def _looks_like_real_value(field_key: str, value: str) -> bool:
+    if field_key == "vendor_name":
+        return " ".join((value or "").split()).casefold() not in _JUNK_VENDOR_NAMES
+    return True
+
+
 logger = logging.getLogger(__name__)
 
 
@@ -129,6 +150,14 @@ class SemanticEngine:
 
         for spec in self.dictionary:
             items = sorted(pooled.get(spec.key, []), key=lambda c: -c.score)
+            # Drop candidates that can't be a real value for this field (a
+            # Udyam "Enterprise Type" cell -- "Small" -- captured under
+            # vendor_name). Only applied when it wouldn't leave the field with
+            # nothing: if every candidate is junk, keep them so the field
+            # still surfaces for review rather than silently vanishing.
+            filtered = [c for c in items if _looks_like_real_value(spec.key, c.value)]
+            if filtered:
+                items = filtered
             field_result = FieldResult(key=spec.key)
 
             if items:
@@ -151,6 +180,17 @@ class SemanticEngine:
                 field_result.notes.append("filled_from_config_default")
 
             result.fields[spec.key] = field_result
+
+        # 2a. segment a combined address line.
+        #
+        # A GST REG-06 certificate (and a Udyam cert / cheque) prints the whole
+        # address on one line with no City/State/PIN caption, so the matcher
+        # lands it all in address_1 and leaves city/state/pin_code empty. Split
+        # that blob deterministically (PIN-directory lookup + state list +
+        # district-aware city pick) and backfill only the pieces still missing.
+        # Anything filled this way is flagged for review -- it was inferred from
+        # one run-on string, not read off a labelled field.
+        self._resolve_combined_address(result)
 
         # 2b. derive fields that nothing on the documents supplied.
         #
@@ -239,6 +279,7 @@ class SemanticEngine:
             trusted = [
                 c for c in sorted(pooled.get(spec.key, []), key=lambda c: -c.score)
                 if c.score >= spec.confidence.min_accept
+                and _looks_like_real_value(spec.key, c.value)
             ]
             for cand in trusted:
                 best_per_doc.setdefault(cand.source_document, cand.value)
@@ -251,9 +292,76 @@ class SemanticEngine:
                     detail="; ".join(disagreements), severity="warning",
                 )
 
+        # 4b. a PIN/state disagreement implicates BOTH fields, not just the
+        # one the validator sits on -- the state validator has already flagged
+        # `state`, so mirror that onto `pin_code` so a reviewer re-checks the
+        # PIN too. Detected by the pin_matches_state finding on `state`.
+        state_result = result.fields.get("state")
+        pin_result = result.fields.get("pin_code")
+        if (
+            state_result and pin_result and pin_result.value
+            and any("pin_matches_state" in m for m in state_result.validation_messages)
+            and not any(
+                e["field"] == "pin_code" and e["reason"] == "pin_state_mismatch"
+                for e in result.needs_review
+            )
+        ):
+            self._flag(
+                result, "pin_code", "pin_state_mismatch", pin_result.confidence,
+                detail=f"PIN {pin_result.value} belongs to a different state than "
+                       f"{state_result.value!r}", severity="warning",
+            )
+
         return result
 
     # -- helpers ------------------------------------------------------------
+
+    def _resolve_combined_address(self, result: ExtractionResult) -> None:
+        """Backfill city / state / pin_code (and tidy address_1) from a
+        run-on address string. No-op unless address_1 looks combined and at
+        least one of the three target fields is still empty."""
+        addr = result.fields.get("address_1")
+        if addr is None or not addr.value:
+            return
+
+        city = result.fields.get("city")
+        state = result.fields.get("state")
+        pin = result.fields.get("pin_code")
+        already = lambda fr: bool(fr and fr.value)
+        if already(city) and already(state) and already(pin):
+            return
+        # A bare "1ST FLOOR" with no commas and no digits-run isn't a blob to
+        # split -- leave it alone.
+        if "," not in addr.value and not any(ch.isdigit() for ch in addr.value):
+            return
+
+        from .address_resolver import resolve_address_blob
+
+        r = resolve_address_blob(addr.value)
+        if not (r.city or r.state or r.pin_code):
+            return
+
+        if r.address_1 and r.address_1 != addr.value:
+            addr.value = r.address_1
+            addr.notes.append("address_1_trimmed_by_address_resolver")
+
+        for key, fr, val in (
+            ("city", city, r.city),
+            ("state", state, r.state),
+            ("pin_code", pin, r.pin_code),
+        ):
+            if val and not already(fr):
+                target = fr if fr is not None else FieldResult(key=key)
+                target.value = val
+                target.confidence = max(target.confidence, 0.55)
+                target.source_document = "address_resolver"
+                target.notes.append(f"resolved_from_combined_address ({r.confidence})")
+                result.fields[key] = target
+                self._flag(
+                    result, key, "value_resolved_from_combined_address", 0.55,
+                    detail=f"split out of address_1; resolver confidence {r.confidence}",
+                    severity="warning",
+                )
 
     def _apply_validation_bias(self, spec, items: list[Candidate]) -> list[Candidate]:
         """Let the field's own validators influence which candidate wins.

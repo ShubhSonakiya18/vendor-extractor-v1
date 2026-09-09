@@ -146,6 +146,41 @@ class TestDerivedRules:
         assert v.check(["state_code"], "", {"gst_number": gstin})[0].ok is expected
 
 
+class TestPinMatchesState:
+    """pin_matches_state cross-checks the extracted state against the state the
+    PIN directory says the 6-digit PIN belongs to. Skips (None) when either
+    field is empty or the PIN is not in the directory."""
+
+    def _v(self):
+        return Validator(rules_with(spec(
+            "pin_state", type="derived", rule="pin_matches_state",
+            source="pin_code", severity="warning",
+        )))
+
+    def test_agreeing_pin_and_state_pass(self):
+        # 711302 -> West Bengal in backend/data/address/pin_directory.csv
+        f = self._v().check(["pin_state"], "West Bengal", {"pin_code": "711302"})
+        assert f and f[0].ok is True
+
+    def test_case_and_alias_insensitive(self):
+        f = self._v().check(["pin_state"], "west bengal", {"pin_code": "711302"})
+        assert f[0].ok is True
+
+    def test_disagreeing_pin_and_state_fail_as_warning(self):
+        f = self._v().check(["pin_state"], "Karnataka", {"pin_code": "711302"})
+        assert f[0].ok is False
+        assert f[0].severity == "warning"
+
+    @pytest.mark.parametrize("state,pin", [
+        ("", "711302"),          # no state to judge
+        ("West Bengal", ""),     # no pin
+        ("West Bengal", "abc"),  # not a 6-digit pin
+        ("West Bengal", "999999"),  # pin not in the directory
+    ])
+    def test_insufficient_data_is_skipped(self, state, pin):
+        assert self._v().check(["pin_state"], state, {"pin_code": pin}) == []
+
+
 # ---------------------------------------------------------------------------
 # cross-document comparison
 # ---------------------------------------------------------------------------
