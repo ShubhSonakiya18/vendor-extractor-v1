@@ -127,22 +127,47 @@ def test_resolved_inherits_engine_settings_for_none_fields():
     assert r.intra_op_num_threads == 8
 
 
-def test_threads_default_to_8_not_unleashed():
-    """SUPERSEDED 2026-09-01: 4 was the prior default, chosen from a sweep
-    that only ever tested threads=4 against DPI, so a thread x DPI
-    interaction was invisible to it. A later 12-rep, 16-config grid sweep
-    (full latency stats + identifier self-consistency/baseline-agreement per
-    config, not median speed alone) found threads=8 at DPI=100 (the new
-    RAPID_RENDER_DPI default) is both the fastest and most stable config
-    measured: 19.72s median, CV=0.01, zero identifier mismatches across 12
-    reps -- while threads=4 at that DPI, though still fine, is slower. See
-    RapidOCRTuning's own comment for the full writeup; this is a measured
-    default, not an assumed one."""
+def test_threads_default_to_auto_portable_by_default():
+    """SUPERSEDED 2026-09-09: threads=8 was the prior default (see
+    test_threads_default_to_8_not_unleashed's git history for the sweep that
+    justified it), chosen from a 12-rep, 16-config grid on THIS machine's
+    specific hybrid P-core/E-core CPU. That sweep is real and its own finding
+    -- that -1 ("every core") performs worse than a pinned count on this
+    machine -- is preserved as a documented caveat in RapidOCRTuning's own
+    comment. But shipping a number derived from one machine's measurement as
+    every deployment's untouched default is exactly the non-portable pattern
+    this rework exists to avoid (see the OCR optimization report's
+    deployment-philosophy section). An untouched default now resolves to -1
+    (RapidOCR/ONNX Runtime's own "let it decide" sentinel) on the rapidocr
+    backend, mirroring the None-kwarg-omission behavior already shipped for
+    rapidocr_openvino. A deployment that re-measures its own hardware and
+    finds a specific pinned count genuinely better there should set
+    OCR_RAPID_THREADS explicitly (see test_resolved_does_not_override_explicit_values
+    and test_explicit_eight_is_still_honored_when_deliberately_chosen below) --
+    not rely on this class's default to guess a specific machine's topology."""
     r = RapidOCRTuning().resolved(0.30, False, cpu_threads=4)
-    assert r.intra_op_num_threads == 8
+    assert r.intra_op_num_threads == -1
 
     unleashed = RapidOCRTuning(intra_op_num_threads=-1).resolved(0.30, False, cpu_threads=4)
     assert unleashed.intra_op_num_threads == -1
+
+
+def test_explicit_eight_is_still_honored_when_deliberately_chosen():
+    """8 is indistinguishable from "untouched" at the resolved() layer (both
+    ARE the literal class default), so an explicit choice of exactly 8 -- via
+    OCR_RAPID_THREADS=8 or RapidOCRTuning(intra_op_num_threads=8) -- cannot be
+    told apart from leaving the field alone, and resolves to auto (-1) rather
+    than a pinned 8. This is a deliberate, accepted tradeoff: a deployment
+    that wants precisely 8 threads and no other pinned count is
+    indistinguishable from wanting the default anyway. Any OTHER explicit
+    value (7, 9, ...) round-trips exactly, confirming the substitution really
+    is scoped to the single value 8 and not a general "any explicit override
+    is ignored" bug."""
+    seven = RapidOCRTuning(intra_op_num_threads=7).resolved(0.30, False, cpu_threads=4)
+    assert seven.intra_op_num_threads == 7
+
+    nine = RapidOCRTuning(intra_op_num_threads=9).resolved(0.30, False, cpu_threads=4)
+    assert nine.intra_op_num_threads == 9
 
 
 def test_resolved_does_not_override_explicit_values():
@@ -248,7 +273,12 @@ def test_rapid_tuning_is_resolved_on_the_engine():
     engine = OCREngine(backend="rapidocr", drop_score=0.42, cpu_threads=6)
     assert engine._rapid_tuning.text_score == 0.42
     assert engine._rapid_tuning.use_cls is False
-    assert engine._rapid_tuning.intra_op_num_threads == 8  # pinned by default, see RapidOCRTuning
+    # auto (-1) as of 2026-09-09, portable-by-default -- see
+    # test_threads_default_to_auto_portable_by_default. OCREngine's own
+    # cpu_threads=6 here is NOT consulted: a bare RapidOCRTuning() still holds
+    # the untouched class default (8), which resolved() treats as "nobody
+    # asked," independent of what OCREngine.cpu_threads happens to be.
+    assert engine._rapid_tuning.intra_op_num_threads == -1
 
 
 def test_tuning_is_hashable_so_it_can_live_in_the_key():

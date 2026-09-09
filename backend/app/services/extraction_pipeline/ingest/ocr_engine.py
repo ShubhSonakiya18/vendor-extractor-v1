@@ -337,6 +337,26 @@ class RapidOCRTuning:
     rec_keys_path: Optional[str] = None
 
     # -- threading ----------------------------------------------------------
+    # PORTABLE-BY-DEFAULT as of 2026-09-09 (see resolved() below): an
+    # UNTOUCHED default (this field still exactly 8, meaning nobody explicitly
+    # asked for a thread count) now resolves to "let the runtime decide" on
+    # BOTH backends -- ORT's own "-1 = every core" sentinel for rapidocr,
+    # `None` (kwarg omitted entirely) for rapidocr_openvino. Deliberately
+    # symmetric: this project's own measured evidence (below) shows -1 is
+    # WORSE than a pinned 8 on THIS machine's specific hybrid P-core/E-core
+    # CPU -- but that finding does not generalize to other CPU topologies
+    # (homogeneous-core servers, different hybrid layouts, other vendors
+    # entirely), and shipping a number derived from one machine's measurement
+    # as every deployment's default is exactly the non-portable pattern this
+    # rework exists to avoid. An EXPLICIT override (via OCR_RAPID_THREADS,
+    # `--ocr-tune`, or `RapidOCRTuning(intra_op_num_threads=N)`) is always
+    # honored as given, on either backend -- nothing about configurability
+    # changed, only what the untouched default resolves to. A deployment that
+    # re-measures its own hardware and finds a specific pinned count is
+    # genuinely better there should set OCR_RAPID_THREADS explicitly, not
+    # rely on this class's own default.
+    #
+    # ---- ONNX Runtime (rapidocr): the measurement this default no longer assumes ----
     # SUPERSEDED 2026-09-01: 4 was chosen from an earlier pinned-vs-unleashed
     # sweep (see below) but was never checked against other pinned counts at
     # every DPI, so a thread x DPI interaction was invisible to it. A 12-rep,
@@ -353,7 +373,8 @@ class RapidOCRTuning:
     # basis for also lowering RAPID_RENDER_DPI to 100 (see settings.py) --
     # the two changes are paired, not independent choices.
     #
-    # Prior finding, still true in isolation: on this machine's hybrid
+    # Prior finding, still true in isolation, and the reason this was ever a
+    # PINNED default rather than automatic: on THIS machine's hybrid
     # P-core/E-core CPU, -1 ("every core") forces threads across BOTH core
     # types simultaneously and is far slower/less consistent than any pinned
     # count tested (101.3s median / 110.1s spread vs 36.7s / 25.5s at
@@ -365,9 +386,45 @@ class RapidOCRTuning:
     #
     # This is a measurement of THIS machine's core topology, not a law -- a
     # homogeneous-core server should be re-measured before trusting 8 here.
+    # As of 2026-09-09 that caveat is taken at face value: resolved() no
+    # longer applies 8 automatically for an untouched default on this backend
+    # either (see "PORTABLE-BY-DEFAULT" above) -- the -1-is-worse finding is
+    # real ON THIS MACHINE but is not assumed to hold on whatever machine this
+    # code actually deploys to. If this pipeline is deployed to hardware with
+    # a similar hybrid-core topology and the same regression is confirmed
+    # there, set OCR_RAPID_THREADS=8 (or whatever that hardware's own sweep
+    # finds) explicitly for that deployment -- see Experiment 3 in the OCR
+    # optimization report for how to run that sweep properly rather than
+    # re-assuming this machine's number.
+    #
+    # ---- OpenVINO (rapidocr_openvino), 2026-09-09 -----------------------
+    # UNLIKE the ONNX Runtime path above, no thread-count sweep was ever run
+    # against rapidocr_openvino specifically -- the shipped default (8) was
+    # carried over from the ONNX Runtime tuning unexamined (see the OCR
+    # optimization report, Section 18C: "an assumption carried over, not a
+    # value re-derived for OpenVINO"). OpenVINO's CPU plugin DOES manage its
+    # own thread/stream configuration when left alone: confirmed by reading
+    # rapidocr_openvino's own infer_engine.py -- inference_num_threads
+    # defaults to -1 internally, and at -1 the code never calls
+    # core.set_property("CPU", {"INFERENCE_NUM_THREADS": ...}) at all, leaving
+    # OpenVINO's Core on its own automatic, hardware-aware configuration.
+    # Given no evidence a manual pin beats that here, resolved() treats an
+    # UNTOUCHED default (this field still exactly 8) as "auto" on the
+    # OpenVINO backend -- swapped to None, which to_rapidocr_openvino_kwargs()
+    # drops entirely from the emitted kwargs (omitting the kwarg is NOT
+    # equivalent to passing a literal -1 or 8 -- it skips OpenVINO's
+    # set_property call entirely, the genuinely-automatic path). The class
+    # default stays 8, unchanged, so the ONNX Runtime path -- and anyone who
+    # explicitly asks for 8 on purpose -- is completely unaffected; only the
+    # OpenVINO backend's *unspecified* case changed. OCR_RAPID_THREADS,
+    # --ocr-tune, or a direct RapidOCRTuning(intra_op_num_threads=N) still
+    # overrides this on either backend, exactly as before -- see from_env()
+    # below and resolved()'s docstring for the precise substitution rule.
     intra_op_num_threads: Optional[int] = 8
     # ORT defaults to sequential execution, so inter-op threads are inert;
-    # pinning to 1 removes a variable rather than adding one.
+    # pinning to 1 removes a variable rather than adding one. rapidocr_openvino
+    # has no equivalent kwarg (not in _RAPIDOCR_OPENVINO_KNOWN_KWARGS), so this
+    # is silently inert -- never emitted -- on the OpenVINO path already.
     inter_op_num_threads: Optional[int] = 1
 
     def __post_init__(self) -> None:
@@ -389,24 +446,73 @@ class RapidOCRTuning:
         drop_score: float,
         use_textline_orientation: bool,
         cpu_threads: Optional[int],
+        backend: str = "rapidocr",
     ) -> "RapidOCRTuning":
         """Fill every inherited `None` from the owning engine's settings.
 
         Only resolved instances reach the cache key or the RapidOCR
         constructor, so no downstream code has to reason about `None`.
+
+        Threading is PORTABLE BY DEFAULT on both backends as of 2026-09-09: if
+        `intra_op_num_threads` is still exactly this class's UNTOUCHED default
+        (8) -- i.e. nobody explicitly asked for a thread count, via
+        `RapidOCRTuning(intra_op_num_threads=...)`, `--ocr-tune`, or
+        `OCR_RAPID_THREADS` -- it resolves to "let the runtime decide" rather
+        than to the literal 8, on EITHER backend. This mirrors the "swap only
+        the untouched default" pattern `_load()` already uses for
+        `det_model_path`/`rec_model_path`. What "let the runtime decide"
+        concretely means differs by backend, because the two runtimes' own
+        automatic-configuration sentinels differ:
+        - `"rapidocr_openvino"`: resolves to `None`, which
+          `to_rapidocr_openvino_kwargs()` drops entirely from the emitted
+          kwargs -- confirmed by reading rapidocr_openvino's own
+          infer_engine.py, omitting the kwarg skips OpenVINO's
+          `set_property` call entirely, leaving its Core on its own
+          automatic, hardware-aware thread/stream configuration.
+        - every other backend (`"rapidocr"`, the ONNX Runtime path, and the
+          default when `backend` is omitted): resolves to `-1`, RapidOCR/ONNX
+          Runtime's own "use every core" sentinel -- ORT's bounds check
+          rejects a bare `None`, so `-1` is the literal value that means
+          "don't pin," not an omission the way OpenVINO's kwarg-drop is.
+          This DIFFERS from this codebase's pre-2026-09-09 behavior, which
+          pinned an untouched default to 8 on this backend specifically,
+          based on a real sweep on the development machine (see the field's
+          own comment) showing -1 performs worse THERE. That finding is
+          preserved as a documented caveat, not silently discarded, but is no
+          longer baked into the shipped default -- see the field's own
+          comment for the full reasoning.
+
+        `cpu_threads` (from the owning `OCREngine`, itself defaulted to
+        `DEFAULT_CPU_THREADS` for the PaddleOCR path) is consulted only as a
+        secondary fallback if `intra_op_num_threads` is `None` for a reason
+        other than the untouched-default substitution above (i.e. it was set
+        to `None` directly) -- an edge case with no current call site, kept
+        for defensiveness rather than exercised in practice.
+
+        An EXPLICIT value (anything other than the literal untouched default
+        8) is always honored as given, on either backend -- nothing about
+        configurability changed, only what leaving the field alone resolves
+        to.
         """
+        if self.intra_op_num_threads == 8:
+            # Untouched class default -> genuinely automatic on both
+            # backends, per this method's own docstring. What "automatic"
+            # resolves to differs because the two runtimes' sentinels differ:
+            # OpenVINO's kwarg-omission (None) is not equivalent to ORT's
+            # literal -1, so this cannot be a single shared value.
+            resolved_threads = None if backend == "rapidocr_openvino" else -1
+        else:
+            resolved_threads = (
+                self.intra_op_num_threads
+                if self.intra_op_num_threads is not None
+                else (cpu_threads if cpu_threads is not None else -1)
+            )
+
         return dataclasses.replace(
             self,
             text_score=self.text_score if self.text_score is not None else drop_score,
             use_cls=self.use_cls if self.use_cls is not None else use_textline_orientation,
-            intra_op_num_threads=(
-                self.intra_op_num_threads
-                if self.intra_op_num_threads is not None
-                # -1 is RapidOCR's "use every core". cpu_threads=None means the
-                # caller wanted the library default, which maps to -1 here --
-                # passing None through would raise inside ORT's bounds check.
-                else (cpu_threads if cpu_threads is not None else -1)
-            ),
+            intra_op_num_threads=resolved_threads,
         )
 
     # -- translation --------------------------------------------------------
@@ -675,6 +781,7 @@ class OCREngine:
                 drop_score=self.drop_score,
                 use_textline_orientation=self.use_textline_orientation,
                 cpu_threads=self.cpu_threads,
+                backend=self.backend,
             )
         else:
             self._rapid_tuning = None
