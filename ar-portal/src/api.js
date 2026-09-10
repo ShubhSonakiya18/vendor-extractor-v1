@@ -357,12 +357,52 @@ export async function getRunResult(runId) {
 /**
  * Returns a URL that, when navigated to, downloads a run artifact.
  *
+ * DEPRECATED for UI use: a plain <a href> navigation carries no request
+ * headers, so it (a) trips ngrok's free-tier browser-warning interstitial
+ * instead of downloading, and (b) sends no bearer token to an auth-protected
+ * endpoint. Use `downloadFile()` instead. Kept only for non-browser callers.
+ *
  * @param {string} runId
  * @param {'xlsx'|'json'|'report'|'extraction'|'spans'} kind
  * @returns {string} URL
  */
 export function downloadUrl(runId, kind) {
   return `${BASE}/download/${runId}/${kind}`
+}
+
+/**
+ * Download a run artifact through fetch(), so the request carries the bearer
+ * token and the ngrok-skip-browser-warning header, then hand the bytes to the
+ * browser as a file save. This is what UI buttons must call.
+ *
+ * @param {string} runId
+ * @param {'xlsx'|'json'|'report'|'extraction'|'spans'} kind
+ * @param {string} [suggestedName] fallback filename if the response sets none
+ * @returns {Promise<void>} resolves once the save has been triggered
+ */
+export async function downloadFile(runId, kind, suggestedName) {
+  const res = await authFetch(`/download/${runId}/${kind}`)
+  if (!res.ok) {
+    let body = null
+    try { body = await res.json() } catch { /* not JSON */ }
+    throw new Error(errorMessage(body, res.status) || `Download failed (${res.status})`)
+  }
+
+  const blob = await res.blob()
+  const disposition = res.headers.get('content-disposition') || ''
+  const match = /filename\*?=(?:UTF-8'')?"?([^";]+)"?/i.exec(disposition)
+  const name = (match && decodeURIComponent(match[1]))
+    || suggestedName
+    || `${kind}-${runId}`
+
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = name
+  document.body.appendChild(a)
+  a.click()
+  a.remove()
+  URL.revokeObjectURL(url)
 }
 
 /**

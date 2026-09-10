@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
 import NavBar from '../components/NavBar'
 import Stepper from '../components/Stepper'
-import { downloadUrl } from '../api'
+import { downloadFile } from '../api'
 import './VendorComparePage.css'
 
 const VENDOR_STEPS = [{ label: 'Upload' }, { label: 'Compare' }, { label: 'Submit' }]
@@ -56,6 +56,8 @@ export default function VendorComparePage() {
   const navigate      = useNavigate()
   const location      = useLocation()
   const [loading, setLoading] = useState(false)
+  const [downloading, setDownloading] = useState(false)
+  const [downloadError, setDownloadError] = useState('')
 
   // Receive the extraction result that VendorUploadPage passed via navigation state
   const result = location.state?.result
@@ -86,6 +88,21 @@ export default function VendorComparePage() {
   function handleSubmit() {
     setLoading(true)
     setTimeout(() => navigate('/vendor/confirm', { state: { result } }), 800)
+  }
+
+  async function handleDownloadXlsx() {
+    setDownloadError('')
+    setDownloading(true)
+    try {
+      const vendor = (result.fields?.vendor_name?.value || 'vendor')
+        .replace(/[^\w.-]+/g, '_')
+      await downloadFile(result.run_id, 'xlsx', `${vendor}-filled.xlsx`)
+    } catch (err) {
+      if (err.code === 'AUTH_EXPIRED') { navigate('/login'); return }
+      setDownloadError(err.message || 'Download failed. Please try again.')
+    } finally {
+      setDownloading(false)
+    }
   }
 
   return (
@@ -154,16 +171,25 @@ export default function VendorComparePage() {
           <div className="action-bar">
             <div className="action-bar-inner">
 
-              {/* Download filled Excel if available */}
+              {/* Download filled Excel if available. Goes through fetch() (see
+                  api.downloadFile) so the request carries the auth token and
+                  the ngrok-skip-browser-warning header -- a plain <a href>
+                  navigation would hit ngrok's interstitial page instead. */}
               {hasXlsx && (
-                <a
-                  href={downloadUrl(result.run_id, 'xlsx')}
-                  download
+                <button
+                  type="button"
+                  onClick={handleDownloadXlsx}
+                  disabled={downloading}
                   className="btn btn-outline"
                   style={{ marginRight: 8 }}
                 >
-                  <DownloadIcon /> Download filled Excel
-                </a>
+                  <DownloadIcon /> {downloading ? 'Preparing…' : 'Download filled Excel'}
+                </button>
+              )}
+              {downloadError && (
+                <div className="mismatch-warning" aria-live="polite" style={{ marginRight: 8 }}>
+                  <WarnIcon /> {downloadError}
+                </div>
               )}
 
               {mismatchCount > 0 && (
