@@ -250,6 +250,49 @@
 }
 .login-auth-error svg { flex-shrink: 0; color: #DC2626; }
 
+/* Demo credentials block -- sits between the password field and Log in */
+.login-demo {
+  margin: 4px 0 16px;
+  padding: 10px 12px;
+  border: 1px dashed var(--color-border, #D8DCE3);
+  border-radius: 8px;
+  background: var(--color-bg, #F5F6F8);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 10px;
+}
+.login-demo-label {
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--color-text-muted);
+}
+.login-demo-fill {
+  margin-left: auto;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--color-link, var(--color-primary));
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+}
+.login-demo-fill:hover { text-decoration: underline; }
+.login-demo-creds {
+  flex-basis: 100%;
+  font-size: 0.8rem;
+  color: var(--color-text-heading, #1F2430);
+}
+.login-demo-creds code {
+  font-family: var(--font-mono, ui-monospace, "SF Mono", Menlo, monospace);
+  background: var(--color-surface, #FFF);
+  border: 1px solid var(--color-border, #E3E6EB);
+  border-radius: 4px;
+  padding: 1px 5px;
+}
+
 /* Submit button */
 .login-submit-btn {
   margin-top: 8px;

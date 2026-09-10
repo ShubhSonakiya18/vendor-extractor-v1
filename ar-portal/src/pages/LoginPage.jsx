@@ -52,6 +52,11 @@ const features = [
   'Audit trail for every submission',
 ]
 
+// Shown on the sign-in form so a reviewer can get in without provisioning.
+// These match the default seed account (backend/app/cli/seed_users.py).
+const DEMO_EMAIL = 'you@netsmartz.com'
+const DEMO_PASSWORD = 'password123'
+
 export default function LoginPage() {
   const navigate = useNavigate()
   const [email,       setEmail]       = useState('')
@@ -91,6 +96,13 @@ export default function LoginPage() {
   function handleForgotPassword(e) {
     e.preventDefault()
     alert('A password reset link has been sent to your email.')
+  }
+
+  function fillDemoCredentials() {
+    setEmail(DEMO_EMAIL)
+    setPassword(DEMO_PASSWORD)
+    setFieldErrors({ email: '', password: '' })
+    setAuthError('')
   }
 
   return (
@@ -197,6 +209,19 @@ export default function LoginPage() {
                 </button>
               </div>
               {fieldErrors.password && <p className="form-error">{fieldErrors.password}</p>}
+            </div>
+
+            {/* Demo credentials */}
+            <div className="login-demo" role="note">
+              <span className="login-demo-label">Demo credentials</span>
+              <button type="button" className="login-demo-fill" onClick={fillDemoCredentials}>
+                Use demo login
+              </button>
+              <div className="login-demo-creds">
+                <code>{DEMO_EMAIL}</code>
+                <span aria-hidden="true"> · </span>
+                <code>{DEMO_PASSWORD}</code>
+              </div>
             </div>
 
             {/* Submit */}
