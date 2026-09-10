@@ -72,6 +72,12 @@ _CONF_LOW = "low"
 class ResolvedAddress:
     address_1: str = ""
     address_2: str = ""
+    # address_3/address_4 are populated ONLY when resolve_address_blob() is
+    # called with multiline=True (vendor path) -- see that function's
+    # docstring. Left "" (their dataclass default) on the legacy path, so
+    # every existing caller and as_dict()'s 5-key shape stay byte-identical.
+    address_3: str = ""
+    address_4: str = ""
     city: str = ""
     state: str = ""
     pin_code: str = ""
@@ -80,6 +86,11 @@ class ResolvedAddress:
     notes: list[str] = field(default_factory=list)
 
     def as_dict(self) -> dict[str, str]:
+        """The ORIGINAL 5-key shape, unchanged since before address_3/4
+        existed. Every current caller (semantic_engine's legacy path,
+        eval_address.py's default mode, split_trailing_location) reads
+        exactly these keys -- do not add address_3/4 here; use
+        as_dict_full() instead, which is additive."""
         return {
             "address_1": self.address_1,
             "address_2": self.address_2,
@@ -87,6 +98,12 @@ class ResolvedAddress:
             "state": self.state,
             "pin_code": self.pin_code,
         }
+
+    def as_dict_full(self) -> dict[str, str]:
+        """as_dict() plus address_3/address_4 -- for the multiline (vendor)
+        path only. A separate method rather than conditionally including the
+        extra keys in as_dict() itself, so as_dict()'s shape never varies."""
+        return {**self.as_dict(), "address_3": self.address_3, "address_4": self.address_4}
 
 
 def _segments(address: str) -> list[str]:
@@ -146,11 +163,64 @@ def _match_state(segments: list[str]) -> tuple[list[str], str, int]:
     return segments, "", -1
 
 
+def _looks_like_premises(segment: str) -> bool:
+    """True when a segment is structurally part of the PROPERTY (a unit/floor
+    designator, a named building, an industrial estate) or a street/landmark,
+    rather than a place name that could be a city.
+
+    Used only to veto the weakest city rule -- the positional "whatever sits
+    last" guess. Without it, "..., METRO LOGISTICS PARK, BAWANA INDUSTRIAL
+    AREA, DELHI" resolved city to "Bawana Industrial Area", promoting an
+    industrial estate into the city field. Localities and keyword-less
+    fragments still pass, since those genuinely can be the city.
+    """
+    try:
+        from .address_segmenter import classify_fragment, _UNKNOWN_TIER
+    except Exception:       # segmenter data unavailable -- keep old behaviour
+        return False
+    tier, _level, _conf, _ev = classify_fragment(segment)
+    return tier not in (_UNKNOWN_TIER, "locality", "village_po")
+
+
+def _split_known_city_prefix(segment: str) -> tuple[str, str]:
+    """Split "NOIDA SECTOR 62" into ("Noida", "SECTOR 62").
+
+    A single segment can carry the city AND a locality when the source wrote
+    them without a comma. Only a KNOWN city name is ever peeled this way, and
+    only from the FRONT, so nothing is invented and the remainder keeps its
+    original text. Returns ("", segment) when there is no such prefix.
+
+    Guarded to the locality shape specifically: the remainder must classify
+    as `locality`/`village_po`/`unknown` (a plausible "which part of the
+    city" suffix), not a street/estate/premises shape. Without this guard,
+    "GHAZIPUR ROAD" -- a street named after the Ghazipur area, not "the city
+    Ghazipur plus a locality" -- had its city-shaped first word peeled off,
+    hallucinating city=Ghazipur onto an address whose actual city was
+    already known from the text (DELHI, matched and removed earlier by
+    _match_state). "NOIDA SECTOR 62" passes the guard because "SECTOR 62"
+    classifies as `locality`; "GHAZIPUR ROAD" fails it because "ROAD"
+    classifies as `thoroughfare`.
+    """
+    from .address_segmenter import classify_fragment
+
+    words = segment.split()
+    # Longest prefix first, so "NAVI MUMBAI ..." beats a bare "NAVI".
+    for cut in range(min(3, len(words) - 1), 0, -1):
+        head, tail = " ".join(words[:cut]), " ".join(words[cut:])
+        if not tail or not is_known_city(head):
+            continue
+        tail_tier, _lvl, _conf, _ev = classify_fragment(tail)
+        if tail_tier in ("locality", "village_po", "unknown"):
+            return head, tail
+    return "", segment
+
+
 def _pick_city(
     segments: list[str],
     pin_district: str,
     have_state_anchor: bool,
-) -> tuple[list[str], str]:
+    state: str = "",
+) -> tuple[list[str], str, bool]:
     """Choose the city token and remove it from `segments`.
 
     Preference, strongest first:
@@ -158,15 +228,31 @@ def _pick_city(
          token wins -- if the document says MOHALI, the city is Mohali even
          when the PIN's district is "S.A.S Nagar")
       2. the last segment that equals the PIN's district
-      3. if a state/PIN anchor exists, the last remaining segment (the old
+      3. the PIN's own district, verbatim, when nothing in the remaining
+         text names a city or the district at all -- e.g. "...ANDUL,
+         Natibpur, 711302" where 711302 -> Howrah, but no segment says
+         "Howrah" and "Natibpur" is a locality, not a known city. Trusting
+         the PIN-directory lookup here is more reliable than guessing from
+         position (step 4): a PIN is a hard, verified fact about the
+         document; "whatever token sits last" is not. This step introduces
+         a district name that was never actually written on the page, so
+         the caller should treat it as a lower-confidence resolution than
+         steps 1-2 (see resolve_address_blob's confidence scoring) --
+         nothing is removed from `segments` for this step, since the
+         district text isn't literally present to remove.
+      4. if a state/PIN anchor exists, the last remaining segment (the old
          "segment right before the state" behaviour) -- but only if it isn't
-         obviously a street/landmark token
+         obviously a street/landmark token. This is the weakest signal and
+         only fires when steps 1-3 all come up empty (no PIN, or a PIN not
+         in the directory).
 
     After the city is chosen, any *adjacent* trailing segment that just
     repeats the city or names the PIN's district is dropped too -- it is a
     redundant district label ("KOLKATA, KOLKATA" / "MOHALI, S.A.S Nagar"),
     not part of the street.
-    Returns (segments_without_city, city_or_'').
+    Returns (segments_without_city, city_or_'', from_pin_fallback) -- the
+    third element is True only for step 3 (the city text was never actually
+    on the page), so the caller can note and score it differently.
     """
     n = len(segments)
     dist_norm = (pin_district or "").casefold().replace(" ", "")
@@ -191,6 +277,32 @@ def _pick_city(
                 chosen = i
                 break
 
+    # Step 3: nothing in the text names the district or a known city, but the
+    # PIN told us the district anyway -- use it rather than falling through
+    # to the positional guess in step 4. Nothing to remove from `segments`
+    # since this text was never there.
+    if chosen == -1 and dist_norm:
+        return segments, _titlecase_city(pin_district), True
+
+    # Step 3b: a segment that carries the city joined onto a locality with no
+    # comma ("NOIDA SECTOR 62"). Peel the known city off the front and keep the
+    # remainder as an ordinary fragment. Scanned end-first like step 1, and
+    # only tried once steps 1-3 have found nothing to prefer.
+    if chosen == -1:
+        for i in range(n - 1, -1, -1):
+            head, tail = _split_known_city_prefix(segments[i])
+            if head:
+                rest = segments[:i] + [tail] + segments[i + 1:]
+                return rest, _titlecase_city(head), False
+
+    # Step 3c: the state is itself a city (Delhi, Chandigarh, Puducherry). If
+    # nothing in the text named a city, the city IS the state. This outranks
+    # the positional guess below deliberately: in "..., KONDLI, DELHI" the
+    # positional rule would promote the locality KONDLI, when the document has
+    # actually told us the city outright.
+    if chosen == -1 and state and is_known_city(state):
+        return segments, _titlecase_city(state), True
+
     if chosen == -1 and have_state_anchor and segments:
         last = segments[-1]
         words = last.casefold().split()
@@ -198,11 +310,14 @@ def _pick_city(
             last.casefold() not in _NON_CITY_TOKENS
             and not last.isdigit()
             and not any(w in _NON_CITY_TOKENS for w in words)
+            # An estate/building/street fragment is never the city, however
+            # conveniently it sits in the last slot.
+            and not _looks_like_premises(last)
         ):
             chosen = n - 1
 
     if chosen == -1:
-        return segments, ""
+        return segments, "", False
 
     city_token = segments[chosen]
     rest = segments[:chosen] + segments[chosen + 1:]
@@ -217,11 +332,21 @@ def _pick_city(
     ):
         rest = rest[:-1]
 
-    return rest, _titlecase_city(city_token)
+    return rest, _titlecase_city(city_token), False
 
 
-def resolve_address_blob(address: str) -> ResolvedAddress:
-    """Segment one combined address string. See module docstring."""
+def resolve_address_blob(address: str, *, multiline: bool = False) -> ResolvedAddress:
+    """Segment one combined address string. See module docstring.
+
+    `multiline` (default False, opt-in): when True, the leftover after the
+    pin/state/city/country peel is additionally run through
+    `address_segmenter.segment_leftover()` to split it into up to 4 ordered
+    lines (address_1..address_4) instead of joining everything into
+    address_1 as one string. This is the VENDOR-path behaviour; the customer
+    path and every other existing caller keep `multiline=False` so their
+    output is byte-identical to before this parameter existed --
+    `split_trailing_location()` below always calls with the default.
+    """
     out = ResolvedAddress()
     segments = _drop_trailing_country(_segments(address))
     if not segments:
@@ -250,26 +375,60 @@ def resolve_address_blob(address: str) -> ResolvedAddress:
         out.notes.append(f"state from pin fallback: {pin_state}")
 
     have_anchor = bool(out.state or pin)
-    segments, city = _pick_city(segments, pin_district, have_anchor)
+    segments, city, city_from_pin_fallback = _pick_city(
+        segments, pin_district, have_anchor, out.state
+    )
     if city:
         out.city = city
-        out.notes.append(f"city: {city}")
+        if city_from_pin_fallback:
+            out.notes.append(f"city: {city} (inferred from PIN's district, not present in the text)")
+        else:
+            out.notes.append(f"city: {city}")
 
-    out.address_1 = ", ".join(segments).strip(" ,")
+    resolver_confidence = _score(out, pin, token_state, pin_state, city_from_pin_fallback)
 
-    out.confidence = _score(out, pin, token_state, pin_state)
+    if multiline and segments:
+        from .address_segmenter import _LEVEL_ORDER, segment_leftover
+
+        seg_result = segment_leftover(segments, pin=pin, district=pin_district)
+        lines = (seg_result.lines + ["", "", "", ""])[:4]
+        out.address_1, out.address_2, out.address_3, out.address_4 = lines
+        if seg_result.notes:
+            out.notes.append(f"segmenter: {'; '.join(seg_result.notes)}")
+        # Overall confidence is the WEAKER of the two independent judgements
+        # (resolver's pin/state/city confidence, segmenter's line-grouping
+        # confidence) -- a confidently-resolved city/state/pin does not
+        # license confidence in the line split, and vice versa.
+        out.confidence = min(
+            (resolver_confidence, seg_result.confidence),
+            key=lambda c: _LEVEL_ORDER[c],
+        )
+    else:
+        out.address_1 = ", ".join(segments).strip(" ,")
+        out.confidence = resolver_confidence
+
     return out
 
 
-def _score(out: ResolvedAddress, pin: str, token_state: str, pin_state: str) -> str:
+def _score(
+    out: ResolvedAddress,
+    pin: str,
+    token_state: str,
+    pin_state: str,
+    city_from_pin_fallback: bool = False,
+) -> str:
     """high  -- PIN present and (no state token, or it agrees) and a city found
-       medium -- 2 of {pin, state, city} resolved
+                IN THE TEXT (not inferred purely from the PIN lookup)
+       medium -- 2 of {pin, state, city} resolved, OR all three resolved but
+                the city was never actually written on the page and only
+                came from the PIN-directory district (a real, useful value,
+                but a lower-trust one than a city the OCR actually read)
        low   -- PIN missing, or state token and PIN's state disagree, or
                 almost nothing resolved."""
     if token_state and pin_state and token_state != pin_state:
         return _CONF_LOW
     resolved = sum(bool(x) for x in (out.pin_code, out.state, out.city))
-    if pin and out.state and out.city:
+    if pin and out.state and out.city and not city_from_pin_fallback:
         return _CONF_HIGH
     if resolved >= 2:
         return _CONF_MEDIUM

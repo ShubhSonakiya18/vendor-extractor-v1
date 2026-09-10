@@ -1,0 +1,391 @@
+# =============================================================================
+# VENDOR ADDRESS LINE SEGMENTATION -- 4-LINE CONVENTION
+# =============================================================================
+# Twenty industrial/commercial vendor addresses of the shape that arrives on a
+# GST REG-06 "Address of Principal Place of Business" line or a Udyam address
+# block: one uncaptioned run-on string carrying premises designators, a named
+# property, a locality, then city and state.
+#
+# Scored with:
+#   python -m app.eval.eval_address --multiline --cases address_vendor_lines.yaml
+#
+# ALL VALUES ARE FABRICATED. Generic property names with real-but-public
+# city/state names. No GSTIN/PAN/account numbers. Safe to commit.
+#
+# -----------------------------------------------------------------------------
+# WHY THIS FILE EXISTS SEPARATELY
+# -----------------------------------------------------------------------------
+# `address_cases.yaml` is written under "interpretation B" -- the whole
+# premises/building/street portion stays in address_1 as ONE string. That file
+# is the legacy baseline and must stay comparable, so it is not rewritten here.
+#
+# This file uses the 4-line convention the vendor path actually targets, and
+# scores `resolve_address_blob(multiline=True)` directly. Feeding the strings
+# straight in is deliberate: an earlier attempt to test these through rendered
+# PDF fixtures failed because headless-Chrome PDFs shatter a long uncaptioned
+# line into per-comma or per-word spans, so the segmenter never received the
+# line it exists to split. Calling the resolver directly tests the component in
+# question with nothing in between.
+#
+# -----------------------------------------------------------------------------
+# CONVENTION
+# -----------------------------------------------------------------------------
+#   address_1  premises designators -- flat/plot/unit/shop/office number,
+#              block, wing, part, floor.            "where in the building"
+#   address_2  the named property, estate or park.  "which building"
+#   address_3  locality / area / road.              "where in the city"
+#   address_4  overflow only; "" in every case here.
+#   city / state / pin_code   isolated canonical values, never inside a line.
+#
+# Source order is preserved: a fragment never moves across another. Where the
+# source itself is out of narrow->broad order (case 02 prints the estate before
+# the building), the grouping follows the source, not a tidied-up ideal.
+#
+# -----------------------------------------------------------------------------
+# THESE EXPECTATIONS ARE NOT COPIED FROM SEGMENTER OUTPUT
+# -----------------------------------------------------------------------------
+# Every `expect` block below is reasoned from the source string by the rules
+# above. Several DISAGREE with what the current implementation produces, and
+# that disagreement is the point of the file -- a corpus whose expectations are
+# harvested from the code under test can only ever score 100% and would hide
+# exactly the defects worth finding.
+#
+# So a FAIL here is a finding to triage, not necessarily a regression. Do not
+# "fix" a case by rewriting its expectation to match current output unless the
+# expectation is genuinely wrong under the convention above.
+#
+# -----------------------------------------------------------------------------
+# RESULTS
+# -----------------------------------------------------------------------------
+# 2026-09-10 baseline, before any fix:  78/140 fields (55.7%), 20/20 cases FAIL
+# 2026-09-10 after fixes below:        130/140 fields (92.9%),  5/20 cases FAIL
+#
+# FIXED -- the named property could not be separated from the premises
+# designators.  Cause was a taxonomy collapse: premises_unit, structural,
+# building_name and estate_zone all sat at level 1, so the gap between
+# "3RD FLOOR" and "SAI INDUSTRIAL PARK" scored only the 0.2 tier-change term
+# and never reached the 0.5 threshold. building_name/estate_zone were given
+# their own level, and _gap_strength now grades a step by its distance:
+#   - a one-level increase scores 0.5 (at threshold, so it cuts, but it is the
+#     shallowest boundary and the first the packer gives back under line
+#     pressure -- which is what keeps the worked example on three lines)
+#   - a decrease WITHIN the premises band scores 0.2 (no cut), any other
+#     decrease 0.4, so "BUILDING D, PART C" stays whole while
+#     "KORAMANGALA, MG ROAD" and "ANDUL, 3RD FLOOR" still split
+#
+# FIXED -- three classification gaps in the same family. "BUILDING D",
+# "OFFICE NO. 405" and "GROUND LEVEL" matched no keyword and defaulted to
+# `unknown` at LOCALITY level, three levels above the premises fragments
+# beside them, cutting a boundary through one premises description.
+# `office`/`ground` became head keywords; "BUILDING D" is handled by a shape
+# rule (a tail-role structure word followed by a short designator) rather than
+# a keyword, because a word in both a head and a tail list makes
+# inject_boundaries cut between the word and its own designator.
+#
+# FIXED -- city resolution promoted non-city fragments:
+#     vl08  "Bawana Industrial Area" -> Delhi   (estate vetoed by classifier)
+#     vl14  "Kondli"                 -> Delhi   (state-is-a-city now outranks
+#                                                the positional guess)
+#     vl10  ""                       -> Noida   (known-city prefix peeled off
+#                                                "NOIDA SECTOR 62")
+#
+# -----------------------------------------------------------------------------
+# STILL FAILING -- a third, distinct issue, deliberately NOT patched
+# -----------------------------------------------------------------------------
+# vl04, vl08, vl09, vl17: a named property and the estate CONTAINING it sit at
+# the same level, so no boundary is inferred between them:
+#     "SHREE GANESH COMPLEX, VATVA GIDC"          building_name + estate_zone
+#     "METRO LOGISTICS PARK, BAWANA INDUSTRIAL AREA"   estate + estate
+#     "SHIVAM INDUSTRIAL ESTATE, FOCAL POINT"          estate + estate
+#     "SARDAR INDUSTRIAL COMPLEX, MAKARPURA GIDC"      estate + estate
+#
+# This is the same SHAPE of defect as the one fixed above, one level up. The
+# building_name/estate_zone half could be fixed the same way (give estate_zone
+# its own level). The estate+estate half cannot -- it needs a positional rule
+# ("the second of two adjacent estate fragments is the containing area"), which
+# is a heuristic of exactly the kind the plan requires to be conservative and
+# confidence-capped. Left as a decision rather than an assumption.
+#
+# vl02: expectation UNDER REVIEW, not a known defect. The source is out of
+# canonical order ("PLOT NO. 47, INDUSTRIAL AREA PHASE II, BUILDING B, GROUND
+# FLOOR"). This file expects the plot and the estate on line 1; the segmenter
+# puts the plot alone on line 1 and keeps the estate with the building details
+# that follow it. The segmenter's reading is arguably the better one. Left
+# failing rather than quietly rewritten to match output.
+# =============================================================================
+
+version: 1
+
+cases:
+
+  # -- canonical narrow -> broad -------------------------------------------
+
+  - id: vl01_sector_locality
+    note: >-
+      Three premises designators, a named park, then a sector locality.
+      The textbook shape.
+    address: "FLAT NO. 302, BLOCK C, 3RD FLOOR, SAI INDUSTRIAL PARK, SECTOR 18, GURUGRAM, HARYANA"
+    expect:
+      address_1: "FLAT NO. 302, BLOCK C, 3RD FLOOR"
+      address_2: "SAI INDUSTRIAL PARK"
+      address_3: "SECTOR 18"
+      address_4: ""
+      city: "Gurugram"
+      state: "Haryana"
+      pin_code: ""
+
+  - id: vl02_estate_before_building
+    note: >-
+      Out of narrow->broad order: the estate (INDUSTRIAL AREA PHASE II) is
+      printed BEFORE the building and floor. Source order is preserved, so the
+      estate stays on line 1 with the plot rather than being moved to line 2.
+    address: "PLOT NO. 47, INDUSTRIAL AREA PHASE II, BUILDING B, GROUND FLOOR, CHAKAN, PUNE, MAHARASHTRA"
+    expect:
+      address_1: "PLOT NO. 47, INDUSTRIAL AREA PHASE II"
+      address_2: "BUILDING B, GROUND FLOOR"
+      address_3: "CHAKAN"
+      address_4: ""
+      city: "Pune"
+      state: "Maharashtra"
+      pin_code: ""
+
+  - id: vl03_highway_and_town
+    note: >-
+      A highway fragment (NH-8) and a town (BHIWANDI) both sit in the locality
+      slot ahead of the district city THANE.
+    address: "UNIT 5A, 2ND FLOOR, TOWER 3, ORBIT LOGISTICS HUB, NH-8, BHIWANDI, THANE, MAHARASHTRA"
+    expect:
+      address_1: "UNIT 5A, 2ND FLOOR, TOWER 3"
+      address_2: "ORBIT LOGISTICS HUB"
+      address_3: "NH-8, BHIWANDI"
+      address_4: ""
+      city: "Thane"
+      state: "Maharashtra"
+      pin_code: ""
+
+  - id: vl04_gidc_tail
+    note: A named GIDC estate occupies the locality slot.
+    address: "SHOP NO. 18, PART B, GROUND LEVEL, SHREE GANESH COMPLEX, VATVA GIDC, AHMEDABAD, GUJARAT"
+    expect:
+      address_1: "SHOP NO. 18, PART B, GROUND LEVEL"
+      address_2: "SHREE GANESH COMPLEX"
+      address_3: "VATVA GIDC"
+      address_4: ""
+      city: "Ahmedabad"
+      state: "Gujarat"
+      pin_code: ""
+
+  - id: vl05_floor_first
+    note: Floor printed first, then wing and unit. Two-word locality.
+    address: "4TH FLOOR, WING A, UNIT 401, EASTERN BUSINESS PARK, SALT LAKE, KOLKATA, WEST BENGAL"
+    expect:
+      address_1: "4TH FLOOR, WING A, UNIT 401"
+      address_2: "EASTERN BUSINESS PARK"
+      address_3: "SALT LAKE"
+      address_4: ""
+      city: "Kolkata"
+      state: "West Bengal"
+      pin_code: ""
+
+  # -- building-first ordering ---------------------------------------------
+
+  - id: vl06_building_first_no_locality
+    note: >-
+      Building printed first, then part/unit/floor. All four are premises
+      designators and belong together; the estate is the only line-2 content
+      and there is no separate locality.
+    address: "BUILDING D, PART C, UNIT NO. 12, 1ST FLOOR, PEENYA INDUSTRIAL ESTATE, BENGALURU, KARNATAKA"
+    expect:
+      address_1: "BUILDING D, PART C, UNIT NO. 12, 1ST FLOOR"
+      address_2: "PEENYA INDUSTRIAL ESTATE"
+      address_3: ""
+      address_4: ""
+      city: "Bengaluru"
+      state: "Karnataka"
+      pin_code: ""
+
+  - id: vl07_canonical
+    note: Plot, block, floor, named complex, locality. Canonical.
+    address: "PLOT NO. 112, BLOCK B, 2ND FLOOR, SRI LAKSHMI INDUSTRIAL COMPLEX, AMBATTUR, CHENNAI, TAMIL NADU"
+    expect:
+      address_1: "PLOT NO. 112, BLOCK B, 2ND FLOOR"
+      address_2: "SRI LAKSHMI INDUSTRIAL COMPLEX"
+      address_3: "AMBATTUR"
+      address_4: ""
+      city: "Chennai"
+      state: "Tamil Nadu"
+      pin_code: ""
+
+  - id: vl08_estate_is_not_the_city
+    note: >-
+      Delhi is both city and state. BAWANA INDUSTRIAL AREA is an industrial
+      estate in the locality slot and must NOT be promoted to city.
+    address: "UNIT NO. 7, BLOCK A, 5TH FLOOR, METRO LOGISTICS PARK, BAWANA INDUSTRIAL AREA, DELHI"
+    expect:
+      address_1: "UNIT NO. 7, BLOCK A, 5TH FLOOR"
+      address_2: "METRO LOGISTICS PARK"
+      address_3: "BAWANA INDUSTRIAL AREA"
+      address_4: ""
+      city: "Delhi"
+      state: "Delhi"
+      pin_code: ""
+
+  - id: vl09_focal_point
+    note: FOCAL POINT is the Punjab estate idiom for a locality.
+    address: "1ST FLOOR, UNIT B-14, PHASE III, SHIVAM INDUSTRIAL ESTATE, FOCAL POINT, LUDHIANA, PUNJAB"
+    expect:
+      address_1: "1ST FLOOR, UNIT B-14, PHASE III"
+      address_2: "SHIVAM INDUSTRIAL ESTATE"
+      address_3: "FOCAL POINT"
+      address_4: ""
+      city: "Ludhiana"
+      state: "Punjab"
+      pin_code: ""
+
+  - id: vl10_city_inside_locality
+    note: >-
+      "NOIDA SECTOR 62" carries the city name inside the locality fragment.
+      The correct reading separates them: city Noida, locality SECTOR 62.
+      Four premises designators run together on line 1.
+    address: "TOWER B, 6TH FLOOR, PART A, OFFICE NO. 603, CYBER TRADE CENTRE, NOIDA SECTOR 62, UTTAR PRADESH"
+    expect:
+      address_1: "TOWER B, 6TH FLOOR, PART A, OFFICE NO. 603"
+      address_2: "CYBER TRADE CENTRE"
+      address_3: "SECTOR 62"
+      address_4: ""
+      city: "Noida"
+      state: "Uttar Pradesh"
+      pin_code: ""
+
+  # -- locality shapes ------------------------------------------------------
+
+  - id: vl11_directional_locality
+    note: Directional suffix on the locality (ANDHERI EAST).
+    address: "UNIT C-22, GROUND FLOOR, BLOCK D, MAHALAXMI INDUSTRIAL PARK, ANDHERI EAST, MUMBAI, MAHARASHTRA"
+    expect:
+      address_1: "UNIT C-22, GROUND FLOOR, BLOCK D"
+      address_2: "MAHALAXMI INDUSTRIAL PARK"
+      address_3: "ANDHERI EAST"
+      address_4: ""
+      city: "Mumbai"
+      state: "Maharashtra"
+      pin_code: ""
+
+  - id: vl12_road_word_inside_name
+    note: >-
+      "RING ROAD INDUSTRIAL COMPLEX" contains ROAD but is one proper name --
+      it must not be split on the road keyword. No separate locality.
+    address: "3RD FLOOR, BUILDING A, UNIT NO. 308, RING ROAD INDUSTRIAL COMPLEX, SURAT, GUJARAT"
+    expect:
+      address_1: "3RD FLOOR, BUILDING A, UNIT NO. 308"
+      address_2: "RING ROAD INDUSTRIAL COMPLEX"
+      address_3: ""
+      address_4: ""
+      city: "Surat"
+      state: "Gujarat"
+      pin_code: ""
+
+  - id: vl13_four_designators
+    note: Four premises designators in a row, then the estate. No locality.
+    address: "PLOT 86, PART B, BLOCK C, 2ND FLOOR, KALINDI INDUSTRIAL ESTATE, FARIDABAD, HARYANA"
+    expect:
+      address_1: "PLOT 86, PART B, BLOCK C, 2ND FLOOR"
+      address_2: "KALINDI INDUSTRIAL ESTATE"
+      address_3: ""
+      address_4: ""
+      city: "Faridabad"
+      state: "Haryana"
+      pin_code: ""
+
+  - id: vl14_locality_vs_delhi
+    note: KONDLI is the locality; Delhi is city and state.
+    address: "OFFICE NO. 405, 4TH FLOOR, TOWER A, SRI DURGA BUSINESS PARK, KONDLI, DELHI"
+    expect:
+      address_1: "OFFICE NO. 405, 4TH FLOOR, TOWER A"
+      address_2: "SRI DURGA BUSINESS PARK"
+      address_3: "KONDLI"
+      address_4: ""
+      city: "Delhi"
+      state: "Delhi"
+      pin_code: ""
+
+  - id: vl15_locality_contains_city_word
+    note: >-
+      HITECH CITY is a locality that contains the word CITY -- it must not be
+      mistaken for the city field, which is Hyderabad.
+    address: "BLOCK E, UNIT 16, GROUND FLOOR, INDUSTRIAL LOGISTICS CENTRE, HITECH CITY, HYDERABAD, TELANGANA"
+    expect:
+      address_1: "BLOCK E, UNIT 16, GROUND FLOOR"
+      address_2: "INDUSTRIAL LOGISTICS CENTRE"
+      address_3: "HITECH CITY"
+      address_4: ""
+      city: "Hyderabad"
+      state: "Telangana"
+      pin_code: ""
+
+  - id: vl16_two_word_city
+    note: >-
+      Two-word city (NAVI MUMBAI) must not be truncated to MUMBAI. Four
+      premises designators, then the estate, no separate locality.
+    address: "2ND FLOOR, PART A, UNIT NO. 214, BUILDING C, TALOJA INDUSTRIAL AREA, NAVI MUMBAI, MAHARASHTRA"
+    expect:
+      address_1: "2ND FLOOR, PART A, UNIT NO. 214, BUILDING C"
+      address_2: "TALOJA INDUSTRIAL AREA"
+      address_3: ""
+      address_4: ""
+      city: "Navi Mumbai"
+      state: "Maharashtra"
+      pin_code: ""
+
+  - id: vl17_named_gidc_locality
+    note: MAKARPURA GIDC is a named estate in the locality slot.
+    address: "UNIT D-09, 1ST FLOOR, BLOCK B, SARDAR INDUSTRIAL COMPLEX, MAKARPURA GIDC, VADODARA, GUJARAT"
+    expect:
+      address_1: "UNIT D-09, 1ST FLOOR, BLOCK B"
+      address_2: "SARDAR INDUSTRIAL COMPLEX"
+      address_3: "MAKARPURA GIDC"
+      address_4: ""
+      city: "Vadodara"
+      state: "Gujarat"
+      pin_code: ""
+
+  - id: vl18_building_first_with_road
+    note: >-
+      Building first, then floor/part/unit -- all premises designators, so all
+      on line 1. BARASAT ROAD is a genuine road in the locality slot (contrast
+      vl12, where ROAD is inside a proper name).
+    address: "BUILDING B, 3RD FLOOR, PART C, UNIT 312, NORTH CITY LOGISTICS PARK, BARASAT ROAD, KOLKATA, WEST BENGAL"
+    expect:
+      address_1: "BUILDING B, 3RD FLOOR, PART C, UNIT 312"
+      address_2: "NORTH CITY LOGISTICS PARK"
+      address_3: "BARASAT ROAD"
+      address_4: ""
+      city: "Kolkata"
+      state: "West Bengal"
+      pin_code: ""
+
+  - id: vl19_initials_with_dots
+    note: >-
+      "R.K. INDUSTRIAL ESTATE" carries dotted initials that normalisation must
+      not shred. KALHER is the locality, BHIWANDI the city.
+    address: "GROUND FLOOR, UNIT A-06, BLOCK F, R.K. INDUSTRIAL ESTATE, KALHER, BHIWANDI, MAHARASHTRA"
+    expect:
+      address_1: "GROUND FLOOR, UNIT A-06, BLOCK F"
+      address_2: "R.K. INDUSTRIAL ESTATE"
+      address_3: "KALHER"
+      address_4: ""
+      city: "Bhiwandi"
+      state: "Maharashtra"
+      pin_code: ""
+
+  - id: vl20_four_designators_with_road
+    note: Four premises designators, named park, then a road locality.
+    address: "5TH FLOOR, PART B, OFFICE 502, TOWER C, GREENFIELD BUSINESS PARK, HOSUR ROAD, BENGALURU, KARNATAKA"
+    expect:
+      address_1: "5TH FLOOR, PART B, OFFICE 502, TOWER C"
+      address_2: "GREENFIELD BUSINESS PARK"
+      address_3: "HOSUR ROAD"
+      address_4: ""
+      city: "Bengaluru"
+      state: "Karnataka"
+      pin_code: ""

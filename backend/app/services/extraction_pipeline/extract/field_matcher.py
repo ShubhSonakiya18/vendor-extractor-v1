@@ -66,7 +66,19 @@ KIND_RANK = {"inline": 0, "adjacent": 1, "pattern_only": 2}
 MIN_PLAUSIBLE_TEXT_LEN = 3
 
 # Punctuation a form uses between a caption and its value.
-_SEPARATOR_RE = re.compile(r"^\s*[:\-–—=|>.]")
+#
+# "." is deliberately EXCLUDED from the character class and handled by
+# _is_separator() below instead of folding it in here. A bare "." is
+# ambiguous in a way the other separator characters are not: "State. West
+# Bengal" (an OCR-misread colon) is a real caption+value split, but "FLAT
+# NO. 302" is an abbreviation period followed by the value's own leading
+# digit, not a separator at all. Matching "." unconditionally here let a
+# free-text field caption itself (matched via a fuzzy/inline hit on its own
+# opening words, e.g. "Flat No" matching inside "FLAT NO. 302, BLOCK C, ...")
+# truncate to whatever followed that period -- address_1 came back as "302"
+# instead of the whole address. See _is_separator's docstring.
+_SEPARATOR_RE = re.compile(r"^\s*[:\-–—=|>]")
+_ABBREVIATION_DOT_RE = re.compile(r"^\s*\.\s*\d")
 
 
 @dataclass
@@ -177,6 +189,17 @@ class FieldMatcher:
             for neighbour in layout.neighbours(span, spec.search.directions, spec.search.max_distance):
                 if neighbour.direction not in spec.search.directions:
                     continue
+                # The neighbour span itself must not be another field's own
+                # caption. A table row ("Block | Road | City | Pin | State")
+                # puts several dictionary captions on one line; a short label
+                # like address_2's "Road" fuzzy-matching that ROW's "Road"
+                # header (rather than a genuine "Road: <value>" caption) then
+                # picked the very next cell, "City", as if it were the value
+                # -- a caption, not data. _join_value already guards against
+                # a caption appearing as a CONTINUATION; this is the same
+                # check applied to the starting span, which it never covered.
+                if self._is_label_like(neighbour.span.text):
+                    continue
                 text = self._strip_own_labels(spec, self._join_value(layout, neighbour.span, spec))
                 cand = self._build(
                     spec, text, neighbour.span, doc_name, doc_type,
@@ -270,8 +293,19 @@ class FieldMatcher:
         matches the caption "Address", and without this check the rest of the
         sentence gets stored as the address. Requiring an explicit separator,
         or a remainder that already has the field's shape, tells the two apart.
+
+        A "." right before a digit is excluded from that separator check --
+        see _SEPARATOR_RE's comment. "FLAT NO. 302, BLOCK C, 3RD FLOOR, SAI
+        INDUSTRIAL PARK..." must not split into caption "FLAT NO" + value
+        "302, BLOCK C, ..." just because the abbreviation happens to fuzzy-
+        match a field's own label ("Flat No") at the start of the address's
+        own free text -- there is no separate caption on the page here at
+        all, and address_1 came back as "302" for real (Chrome/OCR-rendered)
+        combined-address documents before this guard existed.
         """
-        if _SEPARATOR_RE.match(tail):
+        if _ABBREVIATION_DOT_RE.match(tail):
+            return False
+        if _SEPARATOR_RE.match(tail) or tail.lstrip().startswith("."):
             return True
         return bool(spec.patterns) and spec.matches_pattern(remainder)
 
@@ -311,7 +345,27 @@ class FieldMatcher:
     def _join_value(self, layout: PageLayout, span: TextSpan, spec: FieldSpec) -> str:
         """For free-text fields, stitch together spans that continue the value
         on the same line (an address broken into several boxes), stopping at a
-        wide gap or at the next caption."""
+        wide gap or at the next caption -- then do the same DOWN the page for a
+        value that wraps onto a second (or third) visual row.
+
+        A combined GST/Udyam address line often does not fit one table row and
+        wraps, e.g.
+
+            FLAT NO. 302, BLOCK C, 3RD FLOOR, SAI INDUSTRIAL PARK,
+            BUILDING 4, SECTOR 18, SERVICE ROAD, UDYOG VIHAR EXTENSION,
+            SIKANDERPUR, SARHOL, GURUGRAM, HARYANA
+
+        Before this, only the first row was ever captured -- address_1 (and
+        the segmenter fed from it) silently lost every fragment after the
+        first wrap. Continuation rows are accepted only while ALL of these
+        hold, so an ordinary next FIELD below is never swallowed:
+          - the row starts within one caption-column-width of this value's
+            own left edge (a genuine wrap keeps the value's indentation; a new
+            field's value starts in the caption's column, further left)
+          - the row is not itself a caption (_is_label_like)
+          - the vertical gap to the previous row is tight (a real wrap has
+            ordinary line spacing; a new table row has a bigger one)
+        """
         if spec.patterns or spec.value_type != "text":
             return span.text
 
@@ -320,7 +374,7 @@ class FieldMatcher:
             return span.text
 
         unit = span.bbox.height or layout.median_height or 1.0
-        parts = [span.text]
+        row0 = [span.text]
         prev = span
         for other in line.spans:
             if other.bbox.x1 <= span.bbox.x1 or other is span:
@@ -328,9 +382,89 @@ class FieldMatcher:
             gap = (other.bbox.x1 - prev.bbox.x2) / unit
             if gap > 1.2 or self._is_label_like(other.text):
                 break
-            parts.append(other.text)
+            row0.append(other.text)
             prev = other
-        return " ".join(parts)
+
+        # `value` is built up row by row. Each wrapped continuation row is
+        # spliced on with a separator chosen from THAT row's own provenance
+        # (its internal punctuation) -- never from a comma elsewhere in the
+        # value so far. See _wrap_separator.
+        value = " ".join(row0)
+        prev_row_text = value
+
+        row_bottom = span.bbox.y2
+        row_centre = span.bbox.cy
+        row_left = span.bbox.x1
+        for candidate_line in layout.lines:
+            # A wrapped continuation often sits close enough to the caption
+            # row that their bounding boxes slightly OVERLAP (e.g. a value
+            # ending at y2=365 and its very next visual row starting at
+            # y1=364) -- ordinary tight line-spacing, not the same row. Using
+            # the row's own CENTRE rather than a strict "starts after my
+            # bottom edge" cutoff is what tells that apart from a line that
+            # actually IS the same row as the caption (whose centre sits at or
+            # above row_centre, since the caption's own line is scanned here
+            # too and must be skipped).
+            if candidate_line.bbox.cy <= row_centre:
+                continue
+            vgap = (candidate_line.bbox.y1 - row_bottom) / unit
+            if vgap > 1.6:
+                break
+            starters = [s for s in candidate_line.spans if s.bbox.x1 <= row_left + unit * 2.0]
+            if not starters:
+                break
+            first = min(starters, key=lambda s: s.bbox.x1)
+            if abs(first.bbox.x1 - row_left) > unit * 2.0 or self._is_label_like(first.text):
+                break
+            row_parts = [first.text]
+            prev = first
+            for other in candidate_line.spans:
+                if other.bbox.x1 <= first.bbox.x1 or other is first:
+                    continue
+                gap = (other.bbox.x1 - prev.bbox.x2) / unit
+                if gap > 1.2 or self._is_label_like(other.text):
+                    break
+                row_parts.append(other.text)
+                prev = other
+            row_text = " ".join(row_parts)
+            value += self._wrap_separator(prev_row_text, row_text) + row_text
+            row_bottom = candidate_line.bbox.y2
+            row_centre = candidate_line.bbox.cy
+            prev_row_text = row_text
+
+        return value
+
+    @staticmethod
+    def _wrap_separator(prev_row_text: str, row_text: str) -> str:
+        """Separator to splice a wrapped continuation row onto the value.
+
+        A rendered line-wrap INSIDE a comma-delimited list eats the comma that
+        sat at the wrap point; OCR then hands us two rows with nothing between
+        them, and a plain-space join fuses two list items into one fragment
+        ("...PARK, HOSUR ROAD" -> "...PARK HOSUR ROAD"). Restore ", " -- which
+        survives `collapse_spaces` normalisation, unlike a "\\n".
+
+        Every test is provenance of THE WRAPPED ROW ITSELF, never of the
+        accumulated value -- a comma appearing earlier elsewhere in the value
+        can not, by itself, force a separator here. Restore ", " only when ALL:
+
+          1. `prev_row_text` (the row that ends at this wrap) carries >= 2 of
+             its own internal commas -- it is unambiguously a delimited list
+             of 3+ items, and its continuation on the next visual row is the
+             same list. One comma is ambiguous ("City, State" tail of a
+             company name) and is left as a plain-space join.
+          2. that row does not already end in separator punctuation, and the
+             continuation row does not already begin with one.
+        """
+        tail = prev_row_text.rstrip()
+        head = row_text.lstrip()
+        if not tail or not head:
+            return " "
+        if tail[-1] in ",;–—" or head[0] in ",;":
+            return " "
+        if prev_row_text.count(",") < 2:
+            return " "
+        return ", "
 
     def _is_label_like(self, text: str) -> bool:
         cleaned = clean_label(text)

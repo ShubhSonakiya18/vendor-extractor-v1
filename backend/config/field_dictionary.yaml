@@ -79,7 +79,7 @@ fields:
       - Supplier Name
       - Name of the Enterprise
     patterns: []          # Names have no fixed shape; label + position decide.
-    normalization: [strip, collapse_spaces]
+    normalization: [strip, collapse_spaces, split_corporate_suffix]
     validators: [non_empty]
     value_type: text
     expected_documents: [gst_certificate, udyam_certificate]
@@ -113,7 +113,7 @@ fields:
       - Type of Enterprise
       - Type of Entity
     patterns: []
-    normalization: [strip, collapse_spaces, titlecase]
+    normalization: [strip, collapse_spaces, expand_known_phrase, titlecase]
     validators: []
     value_type: text
     expected_documents: [udyam_certificate, gst_certificate]

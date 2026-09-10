@@ -30,10 +30,17 @@ from app.config.config import settings
 from app.models.model import Customer, Vendor
 
 # portal Vendor attribute  ->  BC VendorCard field
+# address_2/3/4 are NOT mapped here individually -- a standard BC VendorCard
+# has only Address and Address_2, no Address_3/Address_4. They are joined
+# into Address_2 explicitly in vendor_to_bc_payload() below, so a vendor whose
+# address_resolver-driven segmentation produced 3 or 4 lines (see
+# address_segmenter.py) still has every line represented on the BC push --
+# nothing is silently dropped for lack of a field to put it in. If the target
+# BC tenant exposes custom Address_3/Address_4 fields, change this to a
+# straight 1:1 map instead of a join.
 _FIELD_MAP: dict[str, str] = {
     "vendor_name": "Name",
     "address_1": "Address",
-    "address_2": "Address_2",
     "city": "City",
     "state": "County",
     "country": "Country_Region_Code",
@@ -46,6 +53,9 @@ _FIELD_MAP: dict[str, str] = {
     "gst_no": "GST_Number",
 }
 
+# Vendor attributes joined (in order) into BC's single Address_2 field.
+_ADDRESS_2_JOIN_FIELDS = ("address_2", "address_3", "address_4")
+
 
 def vendor_to_bc_payload(vendor: Vendor) -> dict:
     """Build the JSON body for a POST to .../VendorCard."""
@@ -55,6 +65,13 @@ def vendor_to_bc_payload(vendor: Vendor) -> dict:
         value = getattr(vendor, attr, None)
         if value:
             payload[bc_field] = str(value).strip()
+
+    address_2_parts = [
+        str(getattr(vendor, attr, "") or "").strip() for attr in _ADDRESS_2_JOIN_FIELDS
+    ]
+    address_2 = ", ".join(p for p in address_2_parts if p)
+    if address_2:
+        payload["Address_2"] = address_2
 
     if settings.BC_GEN_BUS_POSTING_GROUP:
         payload["Gen_Bus_Posting_Group"] = settings.BC_GEN_BUS_POSTING_GROUP

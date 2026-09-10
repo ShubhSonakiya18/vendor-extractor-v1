@@ -1,0 +1,423 @@
+# =============================================================================
+# HELD-OUT ADDRESS SEGMENTATION SET  --  frozen, evaluated ONCE
+# =============================================================================
+# Purpose: measure GENERALISATION of address_segmenter.py (the classify ->
+# gap-score -> group -> pack core AND the _desegment_run OCR word-break).
+#
+#   python -m app.eval.eval_address --multiline --cases address_holdout_cases.yaml
+#
+# RULES (approved plan, constraint 2):
+#   * This file was authored BEFORE the implementation was tuned and is NOT
+#     opened again during tuning. A regression here after a "fix" means the
+#     fix was an overfit and must be reverted.
+#   * Expectations are hand-made decisions from Indian-address SEMANTICS, not
+#     copied from any algorithm's output.
+#   * The name / city / state / locality pool here is DISJOINT from
+#     address_vendor_lines.yaml, address_line_cases.yaml and the 20 gu_*
+#     fixtures. Different cities (Pune, Nagpur, Coimbatore, Indore, Rajkot,
+#     Vadodara, Ludhiana, Vizag, Kochi, Bhubaneswar, Guwahati), different
+#     property names, different locality endings.
+#   * Structurally distinct: unusual designator orders, comma-less runs,
+#     space-stripped (OCR-glued) runs, and keyword traps whose obvious split
+#     is WRONG.
+#
+# ALL VALUES ARE FABRICATED. Real-but-public city/state names only. No
+# GSTIN/PAN/account numbers. Safe to commit.
+# =============================================================================
+
+cases:
+
+  # -- ordinary shapes, disjoint vocabulary ---------------------------------
+  - id: ho01_premises_park_locality
+    note: Two premises designators, a named tech park, one locality, then city/state.
+    address: "UNIT 12, 4TH FLOOR, ORCHID TECH PARK, BALEWADI, PUNE, MAHARASHTRA"
+    expect:
+      address_1: "UNIT 12, 4TH FLOOR"
+      address_2: "ORCHID TECH PARK"
+      address_3: "BALEWADI"
+      address_4: ""
+      city: "Pune"
+      state: "Maharashtra"
+      pin_code: ""
+
+  - id: ho02_plot_estate_two_localities
+    note: >-
+      Plot + phase on line 1, an industrial estate on line 2, then a two-name
+      locality run that must STAY TOGETHER (only 2 names -> no tail split).
+    address: "PLOT 44, PHASE II, HINGNA INDUSTRIAL ESTATE, MIDC HINGNA, NAGPUR, MAHARASHTRA"
+    expect:
+      address_1: "PLOT 44, PHASE II"
+      address_2: "HINGNA INDUSTRIAL ESTATE"
+      address_3: "MIDC HINGNA"
+      address_4: ""
+      city: "Nagpur"
+      state: "Maharashtra"
+      pin_code: ""
+
+  - id: ho03_door_building_locality_pin
+    note: South-Indian door-number shape, a building name, one locality, with a PIN.
+    address: "DOOR NO 5/271, ANNAPOORNA TOWERS, PEELAMEDU, COIMBATORE, TAMIL NADU, 641004"
+    expect:
+      address_1: "DOOR NO 5/271"
+      address_2: "ANNAPOORNA TOWERS"
+      address_3: "PEELAMEDU"
+      address_4: ""
+      city: "Coimbatore"
+      state: "Tamil Nadu"
+      pin_code: "641004"
+
+  - id: ho04_shop_market_locality
+    note: Shop number + a named market (building_name tail "market"), one locality.
+    address: "SHOP 7, RAJWADA CLOTH MARKET, SIYAGANJ, INDORE, MADHYA PRADESH"
+    expect:
+      address_1: "SHOP 7"
+      address_2: "RAJWADA CLOTH MARKET"
+      address_3: "SIYAGANJ"
+      address_4: ""
+      city: "Indore"
+      state: "Madhya Pradesh"
+      pin_code: ""
+
+  - id: ho05_office_complex_locality
+    note: Office + floor, a named complex, a single locality.
+    address: "OFFICE 210, 2ND FLOOR, KALPTARU COMPLEX, KOTHARIYA, RAJKOT, GUJARAT"
+    expect:
+      address_1: "OFFICE 210, 2ND FLOOR"
+      address_2: "KALPTARU COMPLEX"
+      address_3: "KOTHARIYA"
+      address_4: ""
+      city: "Rajkot"
+      state: "Gujarat"
+      pin_code: ""
+
+  # -- long locality runs: tail-split behaviour ---------------------------
+  - id: ho06_four_locality_run_after_premises_splits
+    note: >-
+      Premises + estate, then FOUR nested localities -- the tail split fires
+      (peel the last), because there is prior distinguished content to narrow
+      from. address_2 holds the first three, address_3 the last.
+    address: "GALA 9, GIDC ESTATE, GORWA, SUBHANPURA, GOTRI, VASNA, VADODARA, GUJARAT"
+    expect:
+      address_1: "GALA 9"
+      address_2: "GIDC ESTATE, GORWA, SUBHANPURA, GOTRI"
+      address_3: "VASNA"
+      address_4: ""
+      city: "Vadodara"
+      state: "Gujarat"
+      pin_code: ""
+
+  - id: ho07_three_locality_run_stays_together
+    note: >-
+      No premises/estate content at all -- just three locality names before the
+      city. Nothing to narrow FROM, so the run stays as ONE line (conservative).
+    address: "MODEL TOWN, CIVIL LINES, RISHI NAGAR, LUDHIANA, PUNJAB"
+    expect:
+      address_1: "MODEL TOWN, CIVIL LINES, RISHI NAGAR"
+      address_2: ""
+      address_3: ""
+      address_4: ""
+      city: "Ludhiana"
+      state: "Punjab"
+      pin_code: ""
+
+  - id: ho08_village_po_keyword_own_line
+    note: A REAL village/PO keyword ("VILL.") always takes its own line, regardless of run length.
+    address: "NEAR WATER TANK, VILL. PENDURTHI, VISAKHAPATNAM, ANDHRA PRADESH"
+    expect:
+      address_1: "NEAR WATER TANK"
+      address_2: "VILL. PENDURTHI"
+      address_3: ""
+      address_4: ""
+      city: "Visakhapatnam"
+      state: "Andhra Pradesh"
+      pin_code: ""
+
+  # -- unusual ordering: source order is sacred --------------------------
+  - id: ho09_locality_before_premises_kept_in_order
+    note: >-
+      The document wrote the locality FIRST, then the floor. Source order is
+      preserved -- locality becomes address_1, the premises line address_2.
+    address: "PANAMPILLY NAGAR, 3RD FLOOR, EMPIRE ARCADE, KOCHI, KERALA"
+    expect:
+      address_1: "PANAMPILLY NAGAR"
+      address_2: "3RD FLOOR, EMPIRE ARCADE"
+      address_3: ""
+      address_4: ""
+      city: "Kochi"
+      state: "Kerala"
+      pin_code: ""
+
+  - id: ho10_designators_reversed
+    note: Unit number last instead of first -- still one premises line, order kept.
+    address: "5TH FLOOR, WING D, FLAT 508, MEGHDOOT RESIDENCY, HANSPAL, BHUBANESWAR, ODISHA"
+    expect:
+      address_1: "5TH FLOOR, WING D, FLAT 508"
+      address_2: "MEGHDOOT RESIDENCY"
+      address_3: "HANSPAL"
+      address_4: ""
+      city: "Bhubaneswar"
+      state: "Odisha"
+      pin_code: ""
+
+  # -- comma-less runs: inject_boundaries -------------------------------
+  - id: ho11_commaless_premises_road_locality
+    note: >-
+      No commas anywhere. Boundary injection cuts after the tail keyword FLOOR
+      and before/after ROAD; the trailing name is one locality.
+    address: "2ND FLOOR SILICON PLAZA RING ROAD ZOO ROAD GUWAHATI ASSAM"
+    expect:
+      address_1: "2ND FLOOR"
+      address_2: "SILICON PLAZA"
+      address_3: "RING ROAD ZOO ROAD"
+      address_4: ""
+      city: "Guwahati"
+      state: "Assam"
+      pin_code: ""
+
+  - id: ho12_commaless_single_locality_stays_whole
+    note: A comma-less run with NO keyword evidence collapses to one line (pre-segmenter behaviour).
+    address: "GANGAPUR ROAD DEOLALI NASHIK MAHARASHTRA"
+    expect:
+      address_1: "GANGAPUR ROAD DEOLALI"
+      address_2: ""
+      address_3: ""
+      address_4: ""
+      city: "Nashik"
+      state: "Maharashtra"
+      pin_code: ""
+
+  # -- OCR word-glue: _desegment_run ----------------------------------
+  - id: ho13_glued_premises_park_locality
+    note: >-
+      Every inter-word space dropped by OCR. Re-spacing then segmentation must
+      still produce the three-line shape. "SUNRISE" is a plain name (no split).
+    address: "UNITNO14, 3RDFLOOR, SUNRISETECHPARK, WAKAD, PUNE, MAHARASHTRA"
+    expect:
+      address_1: "UNITNO 14, 3RD FLOOR"
+      address_2: "SUNRISETECH PARK"
+      address_3: "WAKAD"
+      address_4: ""
+      city: "Pune"
+      state: "Maharashtra"
+      pin_code: ""
+
+  - id: ho14_glued_floor_road
+    note: "\"NAGPURROAD\" -> NAGPUR | ROAD (thoroughfare tail is a real anchor)."
+    address: "4THFLOOR, NAGPURROAD, WARDHAMAN NAGAR, NAGPUR, MAHARASHTRA"
+    expect:
+      address_1: "4TH FLOOR"
+      address_2: "NAGPUR ROAD"
+      address_3: "WARDHAMAN NAGAR"
+      address_4: ""
+      city: "Nagpur"
+      state: "Maharashtra"
+      pin_code: ""
+
+  - id: ho15_glued_name_with_embedded_keyword_stays_whole
+    note: >-
+      "LAXMINAGARWADI" embeds locality tails "nagar" and "wadi" but is ONE
+      proper-noun locality -- no confident split, stays whole.
+    address: "PLOT 3, LAXMINAGARWADI, AMRAVATI, MAHARASHTRA"
+    expect:
+      address_1: "PLOT 3"
+      address_2: "LAXMINAGARWADI"
+      address_3: ""
+      address_4: ""
+      city: "Amravati"
+      state: "Maharashtra"
+      pin_code: ""
+
+  # -- keyword traps: obvious split is WRONG --------------------------
+  - id: ho16_park_street_name_not_split
+    note: '"PARK STREET" is a street NAME -- PARK must not be torn from STREET.'
+    address: "12 PARK STREET, ELGIN, KOLKATA, WEST BENGAL"
+    expect:
+      address_1: "12 PARK STREET"
+      address_2: "ELGIN"
+      address_3: ""
+      address_4: ""
+      city: "Kolkata"
+      state: "West Bengal"
+      pin_code: ""
+
+  - id: ho17_lake_gardens_locality_not_split
+    note: '"LAKE GARDENS" is one locality name; GARDENS is not a separate line.'
+    address: "45B, LAKE GARDENS, KOLKATA, WEST BENGAL"
+    expect:
+      address_1: "45B"
+      address_2: "LAKE GARDENS"
+      address_3: ""
+      address_4: ""
+      city: "Kolkata"
+      state: "West Bengal"
+      pin_code: ""
+
+  - id: ho18_nagar_road_thoroughfare_kept_whole
+    note: >-
+      "NAGAR ROAD" -- two tail keywords adjacent. The same-role guard keeps
+      them together; it is one street name.
+    address: "SHERATON HOUSE, NAGAR ROAD, YERAWADA, PUNE, MAHARASHTRA"
+    expect:
+      address_1: "SHERATON HOUSE"
+      address_2: "NAGAR ROAD"
+      address_3: "YERAWADA"
+      address_4: ""
+      city: "Pune"
+      state: "Maharashtra"
+      pin_code: ""
+
+  - id: ho19_industrial_area_road_kept_whole
+    note: '"INDUSTRIAL AREA MAIN ROAD" reads as one thoroughfare description, not a boundary.'
+    address: "GAT 210, INDUSTRIAL AREA MAIN ROAD, CHAKAN, PUNE, MAHARASHTRA"
+    expect:
+      address_1: "GAT 210"
+      address_2: "INDUSTRIAL AREA MAIN ROAD"
+      address_3: "CHAKAN"
+      address_4: ""
+      city: "Pune"
+      state: "Maharashtra"
+      pin_code: ""
+
+  - id: ho20_phase_numeral_kept_with_phase
+    note: '"PHASE II" is a unit -- the numeral stays with PHASE, never its own fragment.'
+    address: "PLOT 88, PHASE II, CHINCHWAD MIDC, PIMPRI CHINCHWAD, MAHARASHTRA"
+    expect:
+      address_1: "PLOT 88, PHASE II"
+      address_2: "CHINCHWAD MIDC"
+      address_3: ""
+      address_4: ""
+      city: "Pimpri Chinchwad"
+      state: "Maharashtra"
+      pin_code: ""
+
+  # -- more premises / property shapes -------------------------------
+  - id: ho21_basement_building_locality
+    note: "\"BASEMENT\" is a premises head; one building, one locality."
+    address: "BASEMENT, CORPORATE HUB, SAYAJIGUNJ, VADODARA, GUJARAT"
+    expect:
+      address_1: "BASEMENT"
+      address_2: "CORPORATE HUB"
+      address_3: "SAYAJIGUNJ"
+      address_4: ""
+      city: "Vadodara"
+      state: "Gujarat"
+      pin_code: ""
+
+  - id: ho22_khasra_number_village
+    note: Rural khasra number + a village/PO keyword line.
+    address: "KHASRA 145/2, MOUZA BORGAON, TAH. KAMPTEE, NAGPUR, MAHARASHTRA"
+    expect:
+      address_1: "KHASRA 145/2"
+      address_2: "MOUZA BORGAON"
+      address_3: "TAH. KAMPTEE"
+      address_4: ""
+      city: "Nagpur"
+      state: "Maharashtra"
+      pin_code: ""
+
+  - id: ho23_two_premises_lines_no_locality
+    note: >-
+      Only premises + a named building, no locality before the city -- two
+      lines, address_3 stays empty (address_3 requires address_2, never
+      manufactured).
+    address: "3RD FLOOR, GERA IMPERIUM, PATTO, PANAJI, GOA"
+    expect:
+      address_1: "3RD FLOOR"
+      address_2: "GERA IMPERIUM"
+      address_3: "PATTO"
+      address_4: ""
+      city: "Panaji"
+      state: "Goa"
+      pin_code: ""
+
+  - id: ho24_five_locality_run_after_estate_splits
+    note: >-
+      Estate + FIVE nested localities -- tail split peels the last; the first
+      four stay on address_2.
+    address: "SEZ UNIT 4, BRIGADE TECH GARDENS, KADUBEESANAHALLI, DODDANEKKUNDI, MARATHAHALLI, BELLANDUR, VARTHUR, KARNATAKA"
+    expect:
+      address_1: "SEZ UNIT 4"
+      address_2: "BRIGADE TECH GARDENS, KADUBEESANAHALLI, DODDANEKKUNDI, MARATHAHALLI"
+      address_3: "VARTHUR"
+      address_4: ""
+      city: ""
+      state: "Karnataka"
+      pin_code: ""
+
+  - id: ho25_glued_designator_chain
+    note: '"PARTB" -> PART | B ; "TOWERD" -> TOWER | D ; two premises designators re-spaced.'
+    address: "PARTB, TOWERD, OFFICE 9, MANTRI SQUARE, MALLESHWARAM, BENGALURU, KARNATAKA"
+    expect:
+      address_1: "PART B, TOWER D, OFFICE 9"
+      address_2: "MANTRI SQUARE"
+      address_3: "MALLESHWARAM"
+      address_4: ""
+      city: "Bengaluru"
+      state: "Karnataka"
+      pin_code: ""
+
+  - id: ho26_hash_number_locality
+    note: '"#" number form; one locality, PIN present.'
+    address: "#24, 1ST MAIN, JAYANAGAR 4TH BLOCK, BENGALURU, KARNATAKA, 560011"
+    expect:
+      address_1: "#24, 1ST MAIN"
+      address_2: "JAYANAGAR 4TH BLOCK"
+      address_3: ""
+      address_4: ""
+      city: "Bengaluru"
+      state: "Karnataka"
+      pin_code: "560011"
+
+  - id: ho27_landmark_then_locality
+    note: '"OPP." landmark head keyword starts its own fragment.'
+    address: "2ND FLOOR, OPP. BUS STAND, GANDHI CHOWK, WARDHA, MAHARASHTRA"
+    expect:
+      address_1: "2ND FLOOR"
+      address_2: "OPP. BUS STAND"
+      address_3: "GANDHI CHOWK"
+      address_4: ""
+      city: "Wardha"
+      state: "Maharashtra"
+      pin_code: ""
+
+  - id: ho28_greenfield_business_park_name
+    note: >-
+      "GREENFIELD BUSINESS PARK" -- a named property. Whole thing is one line;
+      "GREENFIELD" / "BUSINESS" are not separate components.
+    address: "OFFICE 4, GREENFIELD BUSINESS PARK, HITECH CITY, HYDERABAD, TELANGANA"
+    expect:
+      address_1: "OFFICE 4"
+      address_2: "GREENFIELD BUSINESS PARK"
+      address_3: "HITECH CITY"
+      address_4: ""
+      city: "Hyderabad"
+      state: "Telangana"
+      pin_code: ""
+
+  - id: ho29_glued_park_street_stays_whole
+    note: >-
+      OCR-glued "PARKSTREETEXTENSION" -- PARK, STREET, EXTENSION are all
+      tail keywords; no cut between same-role neighbours -> stays whole.
+    address: "10, PARKSTREETEXTENSION, BALLYGUNGE, KOLKATA, WEST BENGAL"
+    expect:
+      address_1: "10"
+      address_2: "PARKSTREETEXTENSION"
+      address_3: "BALLYGUNGE"
+      address_4: ""
+      city: "Kolkata"
+      state: "West Bengal"
+      pin_code: ""
+
+  - id: ho30_mixed_glue_and_clean
+    note: >-
+      One glued fragment ("6THFLOOR"), the rest clean. Only the glued run is
+      re-spaced; commas already present are authoritative.
+    address: "6THFLOOR, KESAR RESIDENCY, ALKAPURI, VADODARA, GUJARAT"
+    expect:
+      address_1: "6TH FLOOR"
+      address_2: "KESAR RESIDENCY"
+      address_3: "ALKAPURI"
+      address_4: ""
+      city: "Vadodara"
+      state: "Gujarat"
+      pin_code: ""

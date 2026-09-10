@@ -317,9 +317,22 @@ class SemanticEngine:
     # -- helpers ------------------------------------------------------------
 
     def _resolve_combined_address(self, result: ExtractionResult) -> None:
-        """Backfill city / state / pin_code (and tidy address_1) from a
+        """Backfill city / state / pin_code AND split the premises/locality
+        remainder into address_1..address_4 (see address_segmenter.py) from a
         run-on address string. No-op unless address_1 looks combined and at
-        least one of the three target fields is still empty."""
+        least one target field is still empty.
+
+        multiline=True is used unconditionally here, for BOTH the vendor and
+        customer paths -- this is safe for the customer path specifically
+        because address_segmenter.segment_leftover() never drops, adds, or
+        reorders tokens (see its own invariant tests): re-joining
+        address_1..4 with ", " always reproduces the identical string a
+        single address_1 blob would have. onboarding_mapper._billing_address
+        (customer) and the vendor Excel/BC mapping both already join
+        address_1..4, so this split is transparent to the customer path's
+        actual output and additive for the vendor path, which is the only
+        consumer that reads address_2/3/4 as separate fields.
+        """
         addr = result.fields.get("address_1")
         if addr is None or not addr.value:
             return
@@ -327,8 +340,29 @@ class SemanticEngine:
         city = result.fields.get("city")
         state = result.fields.get("state")
         pin = result.fields.get("pin_code")
+        addr2 = result.fields.get("address_2")
+        addr3 = result.fields.get("address_3")
+        addr4 = result.fields.get("address_4")
         already = lambda fr: bool(fr and fr.value)
-        if already(city) and already(state) and already(pin):
+
+        # A pin_code that came from a bare pattern hit -- a 6-digit run with no
+        # "PIN" caption anywhere near it -- is not trustworthy enough to gate
+        # this whole function. OCR routinely splits a 10-digit phone number
+        # ("9700727272") and leaves a standalone "970072" that matches the PIN
+        # pattern perfectly; letting that block the combined-address split
+        # meant address_1 stayed a single un-segmented blob. The combined GST
+        # line is the better authority here, so treat a pattern-only / very
+        # low confidence pin as "not really resolved" for the bail check.
+        pin_is_solid = already(pin) and not (
+            getattr(pin, "match_kind", "") == "pattern_only"
+            or (pin is not None and pin.confidence < 0.5)
+        )
+
+        # address_2 deliberately excluded from this early-bail -- see the
+        # overwrite_keys comment below for why an already-populated address_2
+        # is not trustworthy evidence that this function has nothing left to
+        # do when address_1 is a genuinely combined line.
+        if already(city) and already(state) and pin_is_solid:
             return
         # A bare "1ST FLOOR" with no commas and no digits-run isn't a blob to
         # split -- leave it alone.
@@ -337,31 +371,67 @@ class SemanticEngine:
 
         from .address_resolver import resolve_address_blob
 
-        r = resolve_address_blob(addr.value)
-        if not (r.city or r.state or r.pin_code):
+        r = resolve_address_blob(addr.value, multiline=True)
+        if not (r.city or r.state or r.pin_code or r.address_2 or r.address_3 or r.address_4):
             return
 
         if r.address_1 and r.address_1 != addr.value:
             addr.value = r.address_1
             addr.notes.append("address_1_trimmed_by_address_resolver")
 
+        # address_1 having been a genuinely COMBINED line (this function only
+        # reaches here for one) means there is no separate, captioned
+        # address_2/3/4 on the page it came from -- a GST REG-06 or Udyam
+        # certificate never prints both a single run-on address line AND
+        # discrete Road/City caption fields for the SAME place of business.
+        # So whatever the field matcher already put in address_2/3/4 did not
+        # come from a genuine caption for this address; it is noise from
+        # elsewhere on the document set (a dense multi-column table row with
+        # no real gap between adjacent cells -- e.g. Udyam's "Unit(s) Details"
+        # row Flat|Building|Village/Town|Block|Road|City|Pin|State, where a
+        # same-line value scan starting at "Road" runs straight into the next
+        # column's "City" value with nothing to stop at). The segmenter's own
+        # split of the SAME address_1 the resolver just derived these from is
+        # strictly more trustworthy than that, so it OVERWRITES address_2/3/4
+        # specifically, rather than only filling them when empty.
+        #
+        # city/state/pin_code keep the fill-only-if-empty rule: those CAN
+        # legitimately be captioned elsewhere even when address_1 is combined
+        # (mb_control_systems's GST page 1 is exactly that shape), and a
+        # genuine caption there is real signal this function must not clobber.
+        overwrite_keys = {"address_2", "address_3", "address_4"}
         for key, fr, val in (
             ("city", city, r.city),
             ("state", state, r.state),
             ("pin_code", pin, r.pin_code),
+            ("address_2", addr2, r.address_2),
+            ("address_3", addr3, r.address_3),
+            ("address_4", addr4, r.address_4),
         ):
-            if val and not already(fr):
-                target = fr if fr is not None else FieldResult(key=key)
-                target.value = val
-                target.confidence = max(target.confidence, 0.55)
-                target.source_document = "address_resolver"
-                target.notes.append(f"resolved_from_combined_address ({r.confidence})")
-                result.fields[key] = target
-                self._flag(
-                    result, key, "value_resolved_from_combined_address", 0.55,
-                    detail=f"split out of address_1; resolver confidence {r.confidence}",
-                    severity="warning",
-                )
+            if not val:
+                continue
+            if already(fr) and key not in overwrite_keys:
+                continue
+            target = fr if fr is not None else FieldResult(key=key)
+            target.value = val
+            target.confidence = max(target.confidence, 0.55)
+            target.source_document = "address_resolver"
+            target.notes.append(f"resolved_from_combined_address ({r.confidence})")
+            result.fields[key] = target
+            self._flag(
+                result, key, "value_resolved_from_combined_address", 0.55,
+                detail=f"split out of address_1; resolver confidence {r.confidence}",
+                severity="warning",
+            )
+
+        # If we got here BECAUSE the existing pin was only a pattern hit
+        # (pin_is_solid was False) and the combined line yielded no pin of its
+        # own, that pattern-only value was almost certainly a stray digit run
+        # (a split phone number, a form id) -- not a real postal code. Clear
+        # it rather than leave a confident-looking wrong PIN on the form.
+        if not r.pin_code and pin is not None and pin.value and not pin_is_solid:
+            pin.value = ""
+            pin.notes.append("cleared: pattern-only pin, not confirmed by combined address")
 
     def _apply_validation_bias(self, spec, items: list[Candidate]) -> list[Candidate]:
         """Let the field's own validators influence which candidate wins.

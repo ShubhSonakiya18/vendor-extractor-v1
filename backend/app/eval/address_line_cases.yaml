@@ -1,0 +1,413 @@
+# =============================================================================
+# ADDRESS LINE SEGMENTATION TEST CASES (address_segmenter.py)
+# =============================================================================
+# Each case is the LEFTOVER fragment list address_resolver.resolve_address_blob()
+# hands to address_segmenter.segment_leftover() -- i.e. AFTER pin/state/city/
+# country have already been peeled off. This corpus tests the segmenter in
+# isolation, exactly the way address_cases.yaml tests the resolver's
+# pin/state/city peel in isolation.
+#
+# ALL VALUES ARE FABRICATED. No real GSTIN/PAN/account numbers or real
+# premises appear -- generic street/building/locality names only, real-but-
+# public city/area names where used. Safe to commit.
+#
+# This is NOT ground truth generated from the pipeline. `segments` is a
+# hand-written list; `expect` is a hand-made decision about where the line
+# boundaries should fall. It measures the SPLITTING LOGIC directly.
+#
+# Schema:
+#   id       -- unique case id
+#   note     -- what this case is testing and why
+#   segments -- list[str], the leftover fragments (already comma-split; a
+#               SINGLE-element list means "no commas at all in this part of
+#               the source", which is what triggers comma-less repair --
+#               see address_segmenter.py's module docstring)
+#   expect   -- {address_1, address_2, address_3, address_4}; "" means the
+#               segmenter should produce nothing for that line
+#
+# IMPORTANT, read before adding cases or changing the algorithm:
+# The locality-tail-split (the mechanism that can produce address_3) is a
+# HEURISTIC, not a geographic rule -- see address_segmenter.py's module
+# docstring. It only fires when a trailing run of 4+ locality-level fragments
+# follows some OTHER, already-distinguished content (premises/street/estate).
+# A bare list of locality names with nothing else, however long, stays
+# together as ONE line -- there is no signal in that case that the last name
+# specifically is administratively distinct from the others. The
+# "localities_*" bucket below exists specifically to enforce this: it
+# deliberately contains MORE cases where a multi-word locality run stays
+# together than cases where it splits, because staying together is the
+# common, default outcome and splitting is the flagged minority exception.
+# The worked example ("localities_worked_example") appears exactly once, as
+# one case among many -- it is the case that originally motivated this
+# module, not the template the rest of this corpus is derived from.
+# =============================================================================
+
+version: 1
+
+cases:
+
+  # ---- urban, clean comma-separated ----------------------------------------
+  - id: urban_road_locality
+    note: The simplest shape -- street then a single locality.
+    segments: ["12 MG ROAD", "KORAMANGALA"]
+    expect: {address_1: "12 MG ROAD", address_2: "KORAMANGALA", address_3: "", address_4: ""}
+
+  - id: urban_flat_building_locality
+    note: Flat number, then the building it names, then the locality -- three lines.
+    segments: ["FLAT 302", "SUNRISE APARTMENTS", "BANJARA HILLS"]
+    expect: {address_1: "FLAT 302", address_2: "SUNRISE APARTMENTS", address_3: "BANJARA HILLS", address_4: ""}
+
+  - id: urban_shop_mall_locality_sector
+    note: Shop number, then the mall, then locality + sector (which DO stay together).
+    segments: ["SHOP 5", "CITY CENTRE MALL", "SALT LAKE", "SECTOR 5"]
+    expect: {address_1: "SHOP 5", address_2: "CITY CENTRE MALL", address_3: "SALT LAKE, SECTOR 5", address_4: ""}
+
+  - id: urban_floor_building_road
+    note: Floor + building tail (premises) vs a bare road name.
+    segments: ["2ND FLOOR", "ABC TOWERS", "MG ROAD"]
+    expect: {address_1: "2ND FLOOR", address_2: "ABC TOWERS", address_3: "MG ROAD", address_4: ""}
+
+  - id: urban_single_fragment_no_split
+    note: One fragment, nothing to split -- must stay as address_1 alone.
+    segments: ["101 GREEN PARK EXTENSION"]
+    expect: {address_1: "101 GREEN PARK EXTENSION", address_2: "", address_3: "", address_4: ""}
+
+  - id: urban_house_no_sector_city
+    note: House-no head keyword, then sector+city localities staying together.
+    segments: ["HOUSE NO 45", "SECTOR 21", "GURUGRAM"]
+    expect: {address_1: "HOUSE NO 45", address_2: "SECTOR 21, GURUGRAM", address_3: "", address_4: ""}
+
+  - id: urban_alphanumeric_unit_designator
+    note: Alphanumeric designator ("A-402") absorbed into premises with the building tail.
+    segments: ["A-402", "PALM RESIDENCY", "BANER"]
+    expect: {address_1: "A-402", address_2: "PALM RESIDENCY", address_3: "BANER", address_4: ""}
+
+  - id: urban_office_estate_phase
+    note: Office number, then the named estate/park, then the phase locality.
+    segments: ["OFFICE 12", "DLF CYBER CITY", "PHASE 2"]
+    expect: {address_1: "OFFICE 12", address_2: "DLF CYBER CITY", address_3: "PHASE 2", address_4: ""}
+
+  - id: urban_shop_office_two_premises
+    note: >-
+      "SHOP 3" is premises (head:shop). "OFFICE BLOCK A" has no keyword AT
+      THE FRAGMENT EDGE ("block" is mid-fragment, not first/last token, and
+      "office" is not itself a keyword), so it classifies as unknown/locality
+      -- a genuine level jump (1 -> 3), correctly on its own line. Documents
+      a real classifier limitation: keyword matching is edge-positional, not
+      "anywhere in the fragment" -- see address_segmenter.py's classify_fragment.
+    segments: ["SHOP 3", "OFFICE BLOCK A"]
+    expect: {address_1: "SHOP 3, OFFICE BLOCK A", address_2: "", address_3: "", address_4: ""}
+
+  - id: urban_flat_wing_floor_reordered
+    note: Ordering variation of a premises-only address -- floor mentioned last, not first.
+    segments: ["FLAT 12", "WING B", "5TH FLOOR"]
+    expect: {address_1: "FLAT 12, WING B, 5TH FLOOR", address_2: "", address_3: "", address_4: ""}
+
+  - id: urban_plot_landmark_road
+    note: Plot (premises) -> landmark -> road, each a genuine level step.
+    segments: ["PLOT 9", "NEAR CITY HOSPITAL", "RING ROAD"]
+    expect: {address_1: "PLOT 9", address_2: "NEAR CITY HOSPITAL, RING ROAD", address_3: "", address_4: ""}
+
+  - id: urban_no_premises_road_locality
+    note: No premises fragment at all -- address starts directly at street level.
+    segments: ["MG ROAD", "INDIRANAGAR"]
+    expect: {address_1: "MG ROAD", address_2: "INDIRANAGAR", address_3: "", address_4: ""}
+
+  # ---- rural / village / post-office -----------------------------------------
+  - id: rural_vill_po
+    note: >-
+      VILL- and P.O. are both village_po-tier administrative markers (same
+      level) -- they stay together on one line, the same way
+      rural_at_post_taluka_dist's TAL/DIST pair does. A village_po keyword
+      still gets its OWN line when the fragment BEFORE it is a different,
+      lower tier -- see rural_landmark_village and
+      rural_gram_panchayat_phrase for that contrasting case.
+    segments: ["VILL- RAMPUR", "P.O. SITAPUR"]
+    expect: {address_1: "VILL- RAMPUR, P.O. SITAPUR", address_2: "", address_3: "", address_4: ""}
+
+  - id: rural_at_post_taluka_dist
+    note: AT POST / TAL / DIST chain -- taluka and district are same level, stay together.
+    segments: ["AT POST KARANJA", "TAL SHIRUR", "DIST PUNE"]
+    expect: {address_1: "AT POST KARANJA", address_2: "TAL SHIRUR, DIST PUNE", address_3: "", address_4: ""}
+
+  - id: rural_landmark_village
+    note: A landmark preceding a keyword-marked village.
+    segments: ["NEAR SHIV MANDIR", "VILLAGE KOTHRUD"]
+    expect: {address_1: "NEAR SHIV MANDIR", address_2: "VILLAGE KOTHRUD", address_3: "", address_4: ""}
+
+  - id: rural_mouza_ps
+    note: >-
+      Bengal-style MOUZA + P.S. (police station) -- both village_po tier,
+      same level, stay together (same reasoning as rural_vill_po above).
+    segments: ["MOUZA BALLY", "P.S. BALLY"]
+    expect: {address_1: "MOUZA BALLY, P.S. BALLY", address_2: "", address_3: "", address_4: ""}
+
+  - id: rural_gram_panchayat_phrase
+    note: The multi-word "gram panchayat" any-phrase, own line via level jump.
+    segments: ["PLOT 4", "GRAM PANCHAYAT SONAPUR"]
+    expect: {address_1: "PLOT 4", address_2: "GRAM PANCHAYAT SONAPUR", address_3: "", address_4: ""}
+
+  - id: rural_via_mandal
+    note: VIA + MANDAL, both village_po head keywords, stay together (same level).
+    segments: ["VIA HOSUR", "MANDAL DENKANIKOTTAI"]
+    expect: {address_1: "VIA HOSUR, MANDAL DENKANIKOTTAI", address_2: "", address_3: "", address_4: ""}
+
+  - id: rural_no_keywords_two_bare_names
+    note: Two bare rural place names with no administrative keyword -- both unknown/locality, stay together.
+    segments: ["KESHPUR", "GHATAL"]
+    expect: {address_1: "KESHPUR, GHATAL", address_2: "", address_3: "", address_4: ""}
+
+  - id: rural_three_bare_names_no_split
+    note: Three bare unknown-tier place names -- below the tail-split threshold, one line.
+    segments: ["KESHPUR", "GHATAL", "MEDINIPUR"]
+    expect: {address_1: "KESHPUR, GHATAL, MEDINIPUR", address_2: "", address_3: "", address_4: ""}
+
+  # ---- industrial estates (GIDC/MIDC/SIPCOT/SEZ/etc.) -----------------------
+  - id: industrial_plot_gidc_phase
+    note: Plot + GIDC (any-phrase estate_zone) + phase absorbed together as one premises line.
+    segments: ["PLOT 45", "GIDC PHASE 2"]
+    expect: {address_1: "PLOT 45", address_2: "GIDC PHASE 2", address_3: "", address_4: ""}
+
+  - id: industrial_unit_midc_area_locality
+    note: Unit number, then the MIDC industrial area, then a real locality.
+    segments: ["UNIT 7", "MIDC INDUSTRIAL AREA", "TALOJA"]
+    expect: {address_1: "UNIT 7", address_2: "MIDC INDUSTRIAL AREA", address_3: "TALOJA", address_4: ""}
+
+  - id: industrial_gala_sipcot_complex
+    note: Gala (premises head) + SIPCOT industrial complex (any-phrase, same level) merge.
+    segments: ["GALA NO 12", "SIPCOT INDUSTRIAL COMPLEX"]
+    expect: {address_1: "GALA NO 12", address_2: "SIPCOT INDUSTRIAL COMPLEX", address_3: "", address_4: ""}
+
+  - id: industrial_survey_sez_mepz
+    note: Survey number + SEZ phase + MEPZ acronym, all premises-tier, one line.
+    segments: ["SURVEY NO 45/2", "SEZ PHASE 1", "MEPZ"]
+    expect: {address_1: "SURVEY NO 45/2", address_2: "SEZ PHASE 1, MEPZ", address_3: "", address_4: ""}
+
+  - id: industrial_epip_locality
+    note: EPIP (estate) then a real locality name -- genuine level step.
+    segments: ["UNIT 3", "EPIP ZONE", "WHITEFIELD"]
+    expect: {address_1: "UNIT 3", address_2: "EPIP ZONE", address_3: "WHITEFIELD", address_4: ""}
+
+  - id: industrial_kiadb_only
+    note: A single KIADB-tagged premises fragment, nothing else. Two already comma-split segments.
+    segments: ["PLOT 8", "KIADB INDUSTRIAL AREA"]
+    expect: {address_1: "PLOT 8", address_2: "KIADB INDUSTRIAL AREA", address_3: "", address_4: ""}
+
+  # ---- comma-less run-ons (comma-less repair, guarded) ------------------------
+  - id: commaless_flat_building_locality
+    note: Comma-less version of urban_flat_building_locality -- must group identically.
+    segments: ["FLAT 302 SUNRISE APARTMENTS BANJARA HILLS"]
+    expect: {address_1: "FLAT 302", address_2: "SUNRISE APARTMENTS", address_3: "BANJARA HILLS", address_4: ""}
+
+  - id: commaless_plot_gidc_phase_locality
+    note: Comma-less run with GIDC+PHASE absorption, then a trailing locality.
+    segments: ["PLOT 45 GIDC PHASE 2 VATVA"]
+    expect: {address_1: "PLOT 45", address_2: "GIDC, PHASE 2", address_3: "VATVA", address_4: ""}
+
+  - id: commaless_park_street_trap
+    note: >-
+      "PARK STREET" and "GREEN PARK EXTENSION" both embed a generic word
+      (PARK) that is ALSO a tail keyword elsewhere -- the tail-tail adjacency
+      guard must stop it from being shredded out of the proper name.
+    segments: ["SHOP NO 5 GREEN PARK EXTENSION NEW DELHI"]
+    expect: {address_1: "SHOP NO 5", address_2: "GREEN PARK EXTENSION, NEW DELHI", address_3: "", address_4: ""}
+
+  - id: commaless_unit_midc_area_two_localities
+    note: Comma-less. Ends in two locality words that stay together (below the tail-split threshold).
+    segments: ["UNIT 7 MIDC INDUSTRIAL AREA TALOJA PANVEL"]
+    expect: {address_1: "UNIT 7", address_2: "MIDC INDUSTRIAL AREA", address_3: "TALOJA PANVEL", address_4: ""}
+
+  - id: commaless_no_keywords_stays_whole
+    note: >-
+      A comma-less run with ZERO role keywords anywhere must NOT be split on
+      token count or capitalisation alone -- it stays as one fragment.
+    segments: ["MOHIARY CHANDIBAGAN ANDUL NATIBPUR"]
+    expect: {address_1: "MOHIARY CHANDIBAGAN ANDUL NATIBPUR", address_2: "", address_3: "", address_4: ""}
+
+  - id: commaless_short_segment_not_touched
+    note: Fewer than 4 tokens -- below the injection threshold, left untouched even with a keyword.
+    segments: ["3RD FLOOR ABC"]
+    expect: {address_1: "3RD FLOOR ABC", address_2: "", address_3: "", address_4: ""}
+
+  - id: commaless_lake_gardens_trap
+    note: LAKE and GARDENS are both tail-role words in different tiers -- must not split apart.
+    segments: ["FLAT 4 LAKE GARDENS KOLKATA SOUTH"]
+    expect: {address_1: "FLAT 4", address_2: "LAKE GARDENS, KOLKATA SOUTH", address_3: "", address_4: ""}
+
+  - id: commaless_plot_no_absorption
+    note: PLOT NO 4 -- connector NO between head and designator must not itself cause a cut.
+    segments: ["PLOT NO 4 SILVER OAK COMPLEX ANDHERI"]
+    expect: {address_1: "PLOT NO 4", address_2: "SILVER OAK COMPLEX", address_3: "ANDHERI", address_4: ""}
+
+  # ---- inconsistent commas (some segments comma'd, some not) -----------------
+  - id: mixed_commas_1
+    note: First two fragments genuinely comma-separated; nothing left to repair.
+    segments: ["3RD FLOOR", "SILVER OAK COMPLEX", "ANDHERI EAST"]
+    expect: {address_1: "3RD FLOOR", address_2: "SILVER OAK COMPLEX", address_3: "ANDHERI EAST", address_4: ""}
+
+  - id: mixed_commas_2
+    note: >-
+      A well-formed comma'd list spanning all three of the lower tiers --
+      premises (UNIT 5, level 1), thoroughfare (PARK STREET, level 2, via
+      tail:street), locality (KOLKATA CENTRAL, level 3) -- each a genuine
+      level step, so each gets its own line. Confirms multi-segment input
+      never triggers comma-less injection (PARK STREET is NOT shredded by
+      the tail-tail "park"/adjacency guard, since here it is one already-
+      comma-delimited fragment, not a run-on).
+    segments: ["UNIT 5", "PARK STREET", "KOLKATA CENTRAL"]
+    expect: {address_1: "UNIT 5", address_2: "PARK STREET", address_3: "KOLKATA CENTRAL", address_4: ""}
+
+  - id: mixed_commas_3
+    note: Three comma'd fragments where the middle one embeds a generic tail word ("PARK") safely.
+    segments: ["GALA 2", "ORBIT LOGISTICS PARK", "BHIWANDI"]
+    expect: {address_1: "GALA 2", address_2: "ORBIT LOGISTICS PARK", address_3: "BHIWANDI", address_4: ""}
+
+  - id: mixed_commas_4
+    note: A village_po marker arriving as its own already-comma'd segment.
+    segments: ["PLOT 6", "SHIVAM ESTATE", "VILL- SAKINAKA"]
+    expect: {address_1: "PLOT 6", address_2: "SHIVAM ESTATE", address_3: "VILL- SAKINAKA", address_4: ""}
+
+  # ---- reorder pairs (semantic-equivalence, not character-identical) --------
+  - id: reorder_pair_a_forward
+    note: Premises-only address, floor-block-unit order. Paired with reorder_pair_a_reversed.
+    segments: ["3RD FLOOR", "BLOCK B", "UNIT 302"]
+    expect: {address_1: "3RD FLOOR, BLOCK B, UNIT 302", address_2: "", address_3: "", address_4: ""}
+
+  - id: reorder_pair_a_reversed
+    note: Same 3 components as reorder_pair_a_forward, reverse order -- must group identically (same single line), each side in its OWN source order (not forced to match the other case's exact string).
+    segments: ["UNIT 302", "BLOCK B", "3RD FLOOR"]
+    expect: {address_1: "UNIT 302, BLOCK B, 3RD FLOOR", address_2: "", address_3: "", address_4: ""}
+
+  - id: reorder_pair_b_forward
+    note: Road then locality, natural order.
+    segments: ["MG ROAD", "KORAMANGALA"]
+    expect: {address_1: "MG ROAD", address_2: "KORAMANGALA", address_3: "", address_4: ""}
+
+  - id: reorder_pair_b_reversed
+    note: >-
+      Locality mentioned BEFORE the road -- unusual, but the source order is
+      preserved verbatim: address_1 becomes the locality, address_2 the road.
+      This is the "no arbitrary reordering" contract in action.
+    segments: ["KORAMANGALA", "MG ROAD"]
+    expect: {address_1: "KORAMANGALA", address_2: "MG ROAD", address_3: "", address_4: ""}
+
+  - id: reorder_pair_c_forward
+    note: Estate then locality.
+    segments: ["ORBIT LOGISTICS HUB", "BHIWANDI"]
+    expect: {address_1: "ORBIT LOGISTICS HUB", address_2: "BHIWANDI", address_3: "", address_4: ""}
+
+  - id: reorder_pair_c_reversed
+    note: Locality mentioned first -- source order preserved, not corrected.
+    segments: ["BHIWANDI", "ORBIT LOGISTICS HUB"]
+    expect: {address_1: "BHIWANDI", address_2: "ORBIT LOGISTICS HUB", address_3: "", address_4: ""}
+
+  # ---- degenerate / edge cases ------------------------------------------------
+  - id: degenerate_empty
+    note: Nothing left after the pin/state/city/country peel.
+    segments: []
+    expect: {address_1: "", address_2: "", address_3: "", address_4: ""}
+
+  - id: degenerate_single_unknown
+    note: One bare, keyword-less word.
+    segments: ["ANDUL"]
+    expect: {address_1: "ANDUL", address_2: "", address_3: "", address_4: ""}
+
+  - id: degenerate_bare_number
+    note: A lone numeric designator classifies as premises via the shape rule, not locality.
+    segments: ["12"]
+    expect: {address_1: "12", address_2: "", address_3: "", address_4: ""}
+
+  - id: degenerate_unicode_locality
+    note: Non-Latin script locality name must pass through unchanged, not raise or blank.
+    segments: ["3RD FLOOR", "मोहियारी"]
+    expect: {address_1: "3RD FLOOR", address_2: "मोहियारी", address_3: "", address_4: ""}
+
+  - id: degenerate_long_address_many_fragments
+    note: >-
+      A long, fully comma'd address with premises + street + several
+      localities -- exercises the overflow-merge path if more than 4
+      semantic groups would otherwise appear.
+    segments: ["FLAT 9", "SILVER OAK COMPLEX", "MG ROAD",
+               "NEAR CITY HOSPITAL", "KORAMANGALA", "INDIRANAGAR"]
+    expect: {address_1: "FLAT 9", address_2: "SILVER OAK COMPLEX", address_3: "MG ROAD, NEAR CITY HOSPITAL", address_4: "KORAMANGALA, INDIRANAGAR"}
+
+  - id: degenerate_repeated_locality
+    note: A repeated locality name must NOT be deduplicated -- both copies appear.
+    segments: ["ANDUL", "ANDUL"]
+    expect: {address_1: "ANDUL, ANDUL", address_2: "", address_3: "", address_4: ""}
+
+  - id: degenerate_hash_number
+    note: A "#"-prefixed designator classifies as premises via the shape rule.
+    segments: ["#45", "PARK VIEW APARTMENTS"]
+    expect: {address_1: "#45", address_2: "PARK VIEW APARTMENTS", address_3: "", address_4: ""}
+
+  # ---- localities-stay-together (REQUIRED bucket, majority not split) -------
+  - id: localities_2word_stay_1
+    note: Two locality-level fragments -- well below the tail-split threshold, always together.
+    segments: ["KORAMANGALA", "INDIRANAGAR"]
+    expect: {address_1: "KORAMANGALA, INDIRANAGAR", address_2: "", address_3: "", address_4: ""}
+
+  - id: localities_2word_stay_2
+    note: Locality + sector, same level, stay together.
+    segments: ["SALT LAKE", "SECTOR 5"]
+    expect: {address_1: "SALT LAKE, SECTOR 5", address_2: "", address_3: "", address_4: ""}
+
+  - id: localities_3word_stay_1
+    note: The classic 3-locality run -- the common case this heuristic must NOT touch.
+    segments: ["MOHIARY", "CHANDIBAGAN", "ANDUL"]
+    expect: {address_1: "MOHIARY, CHANDIBAGAN, ANDUL", address_2: "", address_3: "", address_4: ""}
+
+  - id: localities_3word_stay_2
+    note: Three well-known Hyderabad localities -- co-equal names, not a narrow-broad chain.
+    segments: ["BANJARA HILLS", "JUBILEE HILLS", "MADHAPUR"]
+    expect: {address_1: "BANJARA HILLS, JUBILEE HILLS, MADHAPUR", address_2: "", address_3: "", address_4: ""}
+
+  - id: localities_3word_stay_3
+    note: Three Chennai-area localities, no other content at all.
+    segments: ["ADYAR", "BESANT NAGAR", "THIRUVANMIYUR"]
+    expect: {address_1: "ADYAR, BESANT NAGAR, THIRUVANMIYUR", address_2: "", address_3: "", address_4: ""}
+
+  - id: localities_4word_stay_1
+    note: >-
+      FOUR co-equal Mumbai localities and NOTHING else in the address -- at
+      the tail-split's raw count threshold, but with no preceding
+      premises/street content to narrow FROM. Must stay together: this is
+      the case that distinguishes "the heuristic is conservative" from "the
+      heuristic never fires above the threshold" -- see reordered_worked_
+      example below for the contrasting case where it correctly DOES fire.
+    segments: ["ANDHERI", "VILE PARLE", "SANTACRUZ", "BANDRA"]
+    expect: {address_1: "ANDHERI, VILE PARLE, SANTACRUZ, BANDRA", address_2: "", address_3: "", address_4: ""}
+
+  - id: localities_4word_stay_2
+    note: Four co-equal Bengaluru localities, same shape as localities_4word_stay_1.
+    segments: ["KORAMANGALA", "INDIRANAGAR", "DOMLUR", "MARATHAHALLI"]
+    expect: {address_1: "KORAMANGALA, INDIRANAGAR, DOMLUR, MARATHAHALLI", address_2: "", address_3: "", address_4: ""}
+
+  - id: localities_5word_stay_no_premises
+    note: Even 5 bare localities with nothing preceding them stay together -- count alone never fires the split.
+    segments: ["A", "B", "C", "D", "E"]
+    expect: {address_1: "A, B, C, D, E", address_2: "", address_3: "", address_4: ""}
+
+  - id: localities_worked_example
+    note: >-
+      THE canonical worked example -- one case among many in this bucket,
+      not the template the rest of it is derived from. Here the tail-split
+      correctly DOES fire, because unlike the localities_4word_stay_* cases
+      above, there IS real premises/estate content before the 4-locality
+      run, giving the heuristic something to narrow FROM.
+    segments: ["3RD FLOOR", "PART A BLOCK B", "SRIJAN INDUSTRIAL LOGISTIC PARK",
+               "MOHIARY", "CHANDIBAGAN", "ANDUL", "NATIBPUR"]
+    expect:
+      address_1: "3RD FLOOR, PART A BLOCK B, SRIJAN INDUSTRIAL LOGISTIC PARK"
+      address_2: "MOHIARY, CHANDIBAGAN, ANDUL"
+      address_3: "NATIBPUR"
+      address_4: ""
+
+  - id: localities_village_po_bypasses_threshold
+    note: >-
+      A REAL village_po keyword ("VILL-") creates its own line regardless of
+      run length -- this is genuine textual evidence, not the positional
+      heuristic, so it is NOT subject to the same-conservatism requirement
+      as the bare-count cases above.
+    segments: ["SILVER OAK", "VILL- SAKINAKA"]
+    expect: {address_1: "SILVER OAK", address_2: "VILL- SAKINAKA", address_3: "", address_4: ""}

@@ -1,0 +1,188 @@
+# =============================================================================
+# ADDRESS LINE SEGMENTATION — keyword data
+# =============================================================================
+# Consumed by extract/address_segmenter.py via address_lookups.segmentation_keywords().
+# Extending coverage (a new suffix, a new estate-zone acronym, a new region's
+# locality endings) is a data change here, not a code change.
+#
+# Each tier has a `level` used by the boundary-inference scoring in
+# address_segmenter.py:
+#
+#   1  premises_unit, structural   "where in the building" -- flat/plot/unit
+#                                  number, block, wing, part, floor
+#   2  building_name, estate_zone  "which building" -- the named property,
+#                                  estate, park or complex
+#   3  thoroughfare, landmark      street / landmark
+#   4  locality (and `unknown`)    area / neighbourhood
+#   5  village_po                  village / post office / administrative
+#
+# Levels 1 and 2 were BOTH 1 until 2026-09-10. Collapsing them meant the gap
+# between "3RD FLOOR" and "SAI INDUSTRIAL PARK" scored only the 0.2
+# tier-change term, below the 0.5 boundary threshold, so a named property
+# could NEVER be separated from the premises designators in front of it --
+# every such address came out as two lines (premises+property, then locality)
+# instead of three. Splitting the level is what makes that boundary
+# expressible at all; see address_vendor_lines.yaml for the corpus that
+# surfaced it.
+#
+# Keyword lists are split by `role`:
+#   head — keyword expected as the FIRST token of a fragment (e.g. "PLOT NO 4")
+#   tail — keyword expected as the LAST token of a fragment (e.g. "3RD FLOOR")
+#   any  — a whole phrase matched anywhere (multi-word acronyms, etc.)
+# Role also drives comma-less boundary injection: cut BEFORE a head keyword,
+# cut AFTER a tail keyword.
+#
+# IMPORTANT: locality-tail-split threshold below is a HEURISTIC, not a
+# geographic rule — see address_segmenter.py's module docstring. It exists to
+# produce a third line on the minority of addresses that enumerate several
+# nested localities; it is NOT a claim that the last locality before a city is
+# always administratively distinct.
+# =============================================================================
+
+version: 1
+
+tiers:
+  premises_unit:
+    level: 1
+    # "office" is head-only and appears in no tail list, so it cannot
+    # re-create the head/tail collision documented under building_name.
+    # Without it "OFFICE NO. 405" matched nothing and defaulted to `unknown`
+    # at locality level, three levels above the "4TH FLOOR, TOWER A" beside
+    # it, which cut a boundary through one premises description.
+    head: [plot, plt, flat, flt, room, rm, unit, shop, gala, godown, shed,
+           cabin, kholi, door, doorno, dno, hno, house, houseno, khasra,
+           khata, survey, sno, gat, cts, rs, msno, mno, premises, stall,
+           counter, kiosk, bay, dock, level, basement, mezzanine, terrace,
+           penthouse, office,
+           # "ground" as a HEAD covers "GROUND LEVEL", which the tail list
+           # cannot: `level` is a head word here, not a tail one, and adding
+           # it to tail as well would let inject_boundaries cut "GROUND |
+           # LEVEL" apart. "GROUND FLOOR" already matched via tail:floor.
+           ground]
+    tail: [floor, flr, fl, storey, mala, tala]
+    any: []
+
+  structural:
+    level: 1
+    # NOTE: "block"/"wing" are deliberately head-only, not tail -- in Indian
+    # addresses they are almost always followed by a designator ("BLOCK B",
+    # "WING C"), never preceded by one. Putting them in `tail` too would cut
+    # a fragment between the keyword and its own designator letter.
+    head: [part, block, blk, wing, tower, twr, phase, ph, annexe, annex, bldg]
+    tail: [annexe, annex]
+    any: []
+
+  building_name:
+    level: 2
+    head: []
+    # NOTE: "unit" deliberately excluded here -- premises_unit already claims
+    # it as a HEAD word ("UNIT 7"), and having it in both a head list and a
+    # tail list caused inject_boundaries() to propose a spurious cut
+    # immediately after "UNIT" itself, splitting it from its own designator
+    # ("UNIT 7" -> "UNIT" | "7"). See test_address_segmenter.py for the
+    # regression case.
+    tail: [building, bhavan, bhawan, sadan, niwas, nivas, mahal, mansion,
+           mansions, chambers, chamber, court, house, tower, towers, plaza,
+           arcade, centre, center, complex, apartment, apartments, apts, apt,
+           residency, heights, enclave, chawl, wadi, market, bazar, bazaar,
+           mall, hall, godown, warehouse, factory, works, mill, mills,
+           campus]
+    any: []
+
+  estate_zone:
+    level: 2
+    head: []
+    # "area" is included here (in addition to being part of the "industrial
+    # area" any-phrase below) specifically so comma-less boundary injection
+    # -- which only consults head/tail ROLE keywords, not multi-word any-
+    # phrases -- can still cut after a compound like "...INDUSTRIAL AREA
+    # TALOJA" even when it has no internal comma.
+    tail: [park, estate, zone, hub, sez, epip, area]
+    any: [gidc, midc, sipcot, sidco, kiadb, kssidc, riico, apiic, tsiic,
+          uspidc, upsidc, hsiidc, gnidc, pcnt, kinfra, epip, epz, sez,
+          mepz, stpi, ftwz, iid, iida, industrial area, industrial estate,
+          industrial park, industrial zone, industrial complex,
+          logistic park, logistics park, it park, itpark, tech park,
+          technology park, software park, biotech park, food park,
+          textile park, apparel park, growth centre, growth center,
+          export promotion, eou, focal point, udyog vihar, udyog nagar]
+
+  thoroughfare:
+    level: 3
+    head: [nh, sh, mdr, ring, outer, inner]
+    tail: [road, rd, marg, path, pathway, street, st, lane, ln, galli, gali,
+           gully, bylane, cross, main, mainroad, crossroad, bypass, highway,
+           expressway, avenue, ave, boulevard, circle, chowk, chowraha,
+           crossing, junction, jn, bridge, ghat, sarani, rasta, veedhi,
+           theru, salai, beedhi]
+    any: []
+
+  landmark:
+    level: 3
+    head: [near, nr, opp, opposite, behind, beside, adjacent, adj, infront,
+           front, next, backside, back, besides, "off", atop, over, above,
+           below]
+    tail: []
+    any: []
+
+  locality:
+    level: 4
+    head: [sector, sec, pocket, pkt]
+    tail: [nagar, nagara, colony, cly, vihar, puram, puri, pura, pur, ganj,
+           gunj, bagh, baugh, garden, gardens, layout, extension, extn, ext,
+           para, palli, pally, pettai, patti, palem, guda, gudem, kunta,
+           halli, hally, kheda, khera, wadi, wada, vasti, basti, bustee,
+           pada, peth, pet, tola, toli, tand, dih, abad, abaad, pukur,
+           danga, hat, haat, bazar, mor, math, mandi, chak, kunj, dham,
+           sarai, serai, gaon, gram, society, soc, township]
+    any: [new town, salt lake, cyber city, cyber hub]
+
+  village_po:
+    level: 5
+    head: [village, vill, vil, mouza, mouja, atpost, po, postoffice, ps,
+           policestation, thana, via, taluka, taluk, tal, tehsil, tahsil,
+           teh, mandal, panchayat, gp, dist, distt, district]
+    tail: []
+    any: [gram panchayat, post office, police station]
+
+# Multi-tier conflict resolution priority, most-specific first. A fragment
+# matching several tiers is assigned the earliest-listed tier here and its
+# confidence is capped (see address_segmenter.py CONFLICT_CONFIDENCE_CAP).
+conflict_priority:
+  - village_po
+  - estate_zone
+  - premises_unit
+  - structural
+  - building_name
+  - landmark
+  - thoroughfare
+  - locality
+
+connectors: ["no", nos, of, at, the, and, "&"]
+
+patterns:
+  highway: '^(nh|sh|mdr)[-\s]?\d+[a-z]?$'
+  designator: '^[a-z]?[-/]?\d+[a-z]?([-/]\d+[a-z]?)*$'
+  ordinal: '^\d+(st|nd|rd|th)$'
+  hash_number: '^#|^no\.?\s*\d'
+
+thresholds:
+  # Boundary-inference: a gap between adjacent fragments is cut when its
+  # scored strength reaches this value. Tunable; see address_segmenter.py.
+  boundary_strength: 0.5
+  # Locality-tail-split: fires ONLY when a trailing run of locality-level
+  # fragments has at least this many members. Deliberately conservative —
+  # the common 2-3-locality case must NOT split by default. See the
+  # module docstring in address_segmenter.py and the plan's "Known
+  # limitations" section before changing this.
+  min_localities_for_tail_split: 4
+  # Comma-less injection is only attempted on segments with at least this
+  # many whitespace tokens and no comma.
+  min_tokens_for_injection: 4
+  max_designator_tokens: 4
+  unknown_fragment_confidence: 0.55
+  confidence_high: 0.70
+  confidence_medium: 0.45
+
+flags:
+  first_fragment_is_premises: true

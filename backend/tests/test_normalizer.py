@@ -78,6 +78,67 @@ class TestFixIfscConfusions:
         assert normalize("BKID0004035", ["fix_ifsc_confusions"]) == "BKID0004035"
 
 
+class TestSplitCorporateSuffix:
+    """OCR drops inter-word spaces in dense certificate cells. This op
+    re-inserts the space between a company-name stem and its glued corporate
+    suffix, from a fixed token list -- never re-spelling the stem."""
+
+    @pytest.mark.parametrize("raw,expected", [
+        ("ORBITLOGISTICSSOLUTIONSPVTLTD", "ORBITLOGISTICSSOLUTIONS PVT LTD"),
+        ("TALOJACHEMICALSPVTLTD", "TALOJACHEMICALS PVT LTD"),
+        ("NORTHCITYLOGISTICSPVTLTD", "NORTHCITYLOGISTICS PVT LTD"),
+        ("SHIVAMFORGINGSPVTLTD", "SHIVAMFORGINGS PVT LTD"),
+        ("AARAVINDUSTRIALSOLUTIONSPRIVATELIMITED",
+         "AARAVINDUSTRIALSOLUTIONS PRIVATE LIMITED"),
+    ])
+    def test_glued_suffix_is_split(self, raw, expected):
+        assert normalize(raw, ["split_corporate_suffix"]) == expected
+
+    @pytest.mark.parametrize("value", [
+        "ORBIT LOGISTICS SOLUTIONS PVT LTD",
+        "M B CONTROL & SYSTEMS PVT LTD",
+        "AARAV INDUSTRIAL SOLUTIONS PRIVATE LIMITED",
+    ])
+    def test_already_spaced_stem_is_untouched(self, value):
+        assert normalize(value, ["split_corporate_suffix"]) == value
+
+    @pytest.mark.parametrize("value", ["RANDOMVENDOR", "TATA", "AMCO", "SOMECO"])
+    def test_no_known_suffix_or_too_short_left_alone(self, value):
+        assert normalize(value, ["split_corporate_suffix"]) == value
+
+    def test_idempotent(self):
+        once = normalize("ORBITLOGISTICSPVTLTD", ["split_corporate_suffix"])
+        assert normalize(once, ["split_corporate_suffix"]) == once
+
+
+class TestExpandKnownPhrase:
+    """A glued legal-form phrase is re-spaced from a CLOSED vocabulary; a value
+    that is not exactly one known phrase (squashed) is returned unchanged."""
+
+    @pytest.mark.parametrize("raw,expected", [
+        ("PRIVATELIMITEDCOMPANY", "private limited company"),
+        ("Privatelimited Company", "private limited company"),
+        ("Private Limited Company", "private limited company"),
+        ("LIMITEDLIABILITYPARTNERSHIP", "limited liability partnership"),
+        ("PROPRIETORSHIP", "proprietorship"),
+        ("PARTNERSHIP", "partnership"),
+    ])
+    def test_known_phrase_is_respaced(self, raw, expected):
+        assert normalize(raw, ["expand_known_phrase"]) == expected
+
+    @pytest.mark.parametrize("value", [
+        "Some Bespoke Structure", "MANUFACTURING", "",
+    ])
+    def test_unknown_value_untouched(self, value):
+        assert normalize(value, ["expand_known_phrase"]) == value
+
+    def test_full_company_type_chain(self):
+        chain = ["strip", "collapse_spaces", "expand_known_phrase", "titlecase"]
+        assert normalize("PRIVATELIMITEDCOMPANY", chain) == "Private Limited Company"
+        assert normalize("Privatelimited Company", chain) == "Private Limited Company"
+        assert normalize("Private Limited Company", chain) == "Private Limited Company"
+
+
 class TestCleanLabel:
     @pytest.mark.parametrize(
         "raw,expected",

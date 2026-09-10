@@ -104,3 +104,36 @@ def data_files_present() -> bool:
     """True when all three lookup files exist -- callers can degrade gracefully
     (skip the PIN-directory path) rather than crash if they were never built."""
     return _PIN_CSV.is_file() and _STATES_TXT.is_file() and _CITIES_TXT.is_file()
+
+
+# ---------------------------------------------------------------------------
+# Address-line segmentation keywords (extract/address_segmenter.py)
+# ---------------------------------------------------------------------------
+_SEGMENTATION_YAML = _DATA_DIR / "segmentation_keywords.yaml"
+
+
+@lru_cache(maxsize=1)
+def segmentation_keywords() -> dict:
+    """Parsed segmentation_keywords.yaml, or {} if missing/malformed.
+
+    A malformed or absent file is NOT an error -- address_segmenter.py degrades
+    to a single-fragment, low-confidence result (identical to the pre-segmenter
+    behaviour) exactly the way the rest of this module degrades when the PIN/
+    state/city files are absent. Cached so the file is parsed once per process.
+    """
+    if not _SEGMENTATION_YAML.is_file():
+        return {}
+    import yaml
+
+    try:
+        with _SEGMENTATION_YAML.open(encoding="utf-8") as f:
+            data = yaml.safe_load(f)
+    except Exception:
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def segmentation_data_present() -> bool:
+    """True when the segmentation keyword file exists and parsed to a non-empty
+    dict -- mirrors data_files_present()'s degrade-gracefully contract."""
+    return bool(segmentation_keywords())

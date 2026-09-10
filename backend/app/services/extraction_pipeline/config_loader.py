@@ -40,6 +40,8 @@ KNOWN_NORMALIZERS = {
     "digits_only",
     "strip_country_code",
     "fix_ifsc_confusions",
+    "split_corporate_suffix",
+    "expand_known_phrase",
 }
 
 KNOWN_VALIDATOR_TYPES = {"regex", "length", "enum", "non_empty", "derived"}
