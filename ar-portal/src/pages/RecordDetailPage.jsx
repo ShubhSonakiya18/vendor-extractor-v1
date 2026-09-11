@@ -257,12 +257,6 @@ export default function RecordDetailPage() {
                 </p>
               )}
 
-              {!editing && Array.isArray(rec.fields_needing_review) && rec.fields_needing_review.length > 0 && (
-                <p className="records-review-note">
-                  Flagged at extraction for review: {rec.fields_needing_review.join(', ')}
-                </p>
-              )}
-
               {editErr && <p className="records-error">{editErr}</p>}
 
               <div className="record-view">
