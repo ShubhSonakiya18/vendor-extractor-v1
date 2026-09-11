@@ -100,6 +100,55 @@ class TestPayload:
         p = auth_client.get(f"/business-central/vendors/{vid}/payload").json()["payload"]
         assert p["Vendor_Posting_Group"] == "EMPLOAN"
 
+
+class TestAddressOverflow:
+    """BC's base VendorCard has Address/Address_2/City/County etc. as fixed-
+    width Text fields (Address_2 is Text[50]) -- this is enforced inside BC's
+    own schema and rejected with Application_StringExceededLength, which is
+    exactly what a real push hit (address_2/3/4 joined together produced a
+    100-char Address_2 for a genuine multi-locality industrial address). The
+    portal must never send an overflowing value; it truncates word-boundary
+    aware and reports which BC fields were cut so the record can be flagged
+    for a human to complete directly in BC."""
+
+    def test_long_joined_address_is_truncated_to_fit(self, auth_client, bc_enabled):
+        # the actual address shape that produced Application_StringExceededLength
+        r = auth_client.post("/vendors", json={
+            "vendor_name": "Peenya Control Systems Pvt Ltd",
+            "address_1": "Building D, Part C, Unit No. 12, 1st Floor",
+            "address_2": "Peenya Industrial Estate",
+            "address_3": "Phase I, Tumkur Road, Industrial Area",
+            "address_4": "Nandini Layout, Yeshwanthpur, Peenya",
+            "city": "Bengaluru",
+            "state": "Karnataka",
+        })
+        assert r.status_code == 201, r.text
+        vid = r.json()["id"]
+
+        body = auth_client.get(f"/business-central/vendors/{vid}/payload").json()
+        p = body["payload"]
+
+        assert len(p["Address_2"]) <= 50
+        assert "Address_2" in body["truncated_fields"]
+        # `_truncated_fields` is bc_mapper bookkeeping, never a real BC field --
+        # it must never leak into the payload actually POSTed to BC.
+        assert "_truncated_fields" not in p
+        # the cut must land on a word boundary, not mid-token
+        assert not p["Address_2"].endswith((" ", ",", ";"))
+
+    def test_short_address_is_not_flagged_as_truncated(self, auth_client, bc_enabled):
+        vid = _create_vendor(auth_client)
+        body = auth_client.get(f"/business-central/vendors/{vid}/payload").json()
+        assert body["truncated_fields"] == []
+        assert "_truncated_fields" not in body["payload"]
+
+    def test_truncated_fields_present_even_when_empty(self, auth_client, bc_enabled):
+        # the key must always be present (never omitted) so the frontend can
+        # rely on `body.truncated_fields.length > 0` without a null check.
+        vid = _create_vendor(auth_client)
+        body = auth_client.get(f"/business-central/vendors/{vid}/payload").json()
+        assert isinstance(body["truncated_fields"], list)
+
     def test_payload_404_for_missing_vendor(self, auth_client, bc_enabled):
         assert auth_client.get("/business-central/vendors/999999/payload").status_code == 404
 

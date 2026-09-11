@@ -29,6 +29,51 @@ from __future__ import annotations
 from app.config.config import settings
 from app.models.model import Customer, Vendor
 
+# Standard Business Central field widths (base VendorCard/CustomerCard --
+# Vendor and Customer tables both use these same widths for the same-named
+# fields). Fixed inside BC's own schema: the OData endpoint rejects anything
+# longer with Application_StringExceededLength, and this cannot be changed
+# from the portal side -- only a BC AL extension widening the base table
+# column could raise it. A field with no entry here is assumed unbounded
+# (safe default; BC will reject it just the same if that assumption is wrong,
+# and the failure will now show the real reason -- see push_to_bc.ps1).
+_BC_FIELD_MAX_LEN: dict[str, int] = {
+    "Name": 50,
+    "Address": 50,
+    "Address_2": 50,
+    "City": 30,
+    "County": 30,
+    "Contact": 50,
+    "Phone_No": 30,
+    "MobilePhoneNo": 30,
+    "E_Mail": 80,
+    "Home_Page": 80,
+    "Post_Code": 20,
+    "PAN_Number": 20,
+    "GST_Number": 20,
+}
+
+
+def _fit_to_bc_width(bc_field: str, value: str, truncated: list[str]) -> str:
+    """Cut `value` to bc_field's known BC column width, word-boundary aware,
+    and record the field name in `truncated` when a cut actually happened.
+    A field with no configured width is returned unchanged -- BC still
+    enforces its own limit server-side if this table is ever wrong or
+    incomplete; this is a best-effort pre-check, not the source of truth."""
+    limit = _BC_FIELD_MAX_LEN.get(bc_field)
+    if limit is None or len(value) <= limit:
+        return value
+    # Prefer cutting at the last whitespace inside the limit so a word isn't
+    # split mid-token; fall back to a hard cut only if there's no whitespace
+    # to break on (one very long unbroken token).
+    head = value[:limit]
+    last_space = head.rfind(" ")
+    cut = head[:last_space].rstrip() if last_space > 0 else head
+    cut = cut.rstrip(",;").rstrip() or head  # don't leave a trailing separator
+    truncated.append(bc_field)
+    return cut
+
+
 # portal Vendor attribute  ->  BC VendorCard field
 # address_2/3/4 are NOT mapped here individually -- a standard BC VendorCard
 # has only Address and Address_2, no Address_3/Address_4. They are joined
@@ -58,20 +103,27 @@ _ADDRESS_2_JOIN_FIELDS = ("address_2", "address_3", "address_4")
 
 
 def vendor_to_bc_payload(vendor: Vendor) -> dict:
-    """Build the JSON body for a POST to .../VendorCard."""
+    """Build the JSON body for a POST to .../VendorCard, plus a
+    `_truncated_fields` list (BC field names cut to fit BC's own column
+    width -- see _BC_FIELD_MAX_LEN). Non-empty `_truncated_fields` means the
+    push will still succeed, but the sent value is not the FULL extracted
+    address; the caller should flag the record for a human to check/complete
+    directly in BC. Strip `_truncated_fields` before sending -- it is not a
+    BC field."""
     payload: dict[str, str] = {"No": ""}
+    truncated: list[str] = []
 
     for attr, bc_field in _FIELD_MAP.items():
         value = getattr(vendor, attr, None)
         if value:
-            payload[bc_field] = str(value).strip()
+            payload[bc_field] = _fit_to_bc_width(bc_field, str(value).strip(), truncated)
 
     address_2_parts = [
         str(getattr(vendor, attr, "") or "").strip() for attr in _ADDRESS_2_JOIN_FIELDS
     ]
     address_2 = ", ".join(p for p in address_2_parts if p)
     if address_2:
-        payload["Address_2"] = address_2
+        payload["Address_2"] = _fit_to_bc_width("Address_2", address_2, truncated)
 
     if settings.BC_GEN_BUS_POSTING_GROUP:
         payload["Gen_Bus_Posting_Group"] = settings.BC_GEN_BUS_POSTING_GROUP
@@ -80,6 +132,7 @@ def vendor_to_bc_payload(vendor: Vendor) -> dict:
     if settings.BC_VENDOR_POSTING_GROUP:
         payload["Vendor_Posting_Group"] = settings.BC_VENDOR_POSTING_GROUP
 
+    payload["_truncated_fields"] = truncated
     return payload
 
 
@@ -120,13 +173,16 @@ _CUSTOMER_FIELD_MAP: dict[str, str] = {
 def customer_to_bc_payload(customer: Customer) -> dict:
     """Build the JSON body for a POST to .../CustomerCard. Mirrors
     vendor_to_bc_payload: blank values omitted rather than sent as "", `No`
-    sent empty so BC assigns it from its own No. Series."""
+    sent empty so BC assigns it from its own No. Series, and BC-column-width
+    overflow is truncated with the cut fields reported in
+    `_truncated_fields` (strip before sending -- not a BC field)."""
     payload: dict[str, str] = {"No": ""}
+    truncated: list[str] = []
 
     for attr, bc_field in _CUSTOMER_FIELD_MAP.items():
         value = getattr(customer, attr, None)
         if value:
-            payload[bc_field] = str(value).strip()
+            payload[bc_field] = _fit_to_bc_width(bc_field, str(value).strip(), truncated)
 
     if settings.BC_GEN_BUS_POSTING_GROUP:
         payload["Gen_Bus_Posting_Group"] = settings.BC_GEN_BUS_POSTING_GROUP
@@ -135,6 +191,7 @@ def customer_to_bc_payload(customer: Customer) -> dict:
     if settings.BC_CUSTOMER_POSTING_GROUP:
         payload["Customer_Posting_Group"] = settings.BC_CUSTOMER_POSTING_GROUP
 
+    payload["_truncated_fields"] = truncated
     return payload
 
 

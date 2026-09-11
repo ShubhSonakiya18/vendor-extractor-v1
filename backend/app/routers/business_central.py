@@ -66,13 +66,23 @@ def vendor_bc_payload(
     if vendor is None:
         raise HTTPException(status_code=404, detail="Vendor not found")
 
+    # `_truncated_fields` is bc_mapper's own bookkeeping, not a BC field --
+    # pull it out of `payload` before it's sent anywhere near BC (the JSON
+    # file this endpoint produces is POSTed to BC byte-for-byte by
+    # scripts/push_to_bc.ps1) and surface it as a sibling key instead, so the
+    # portal can flag "address was too long for BC and got cut" without BC
+    # ever seeing an unexpected field.
+    payload = vendor_to_bc_payload(vendor)
+    truncated_fields = payload.pop("_truncated_fields", [])
+
     return {
         "vendor_id": vendor.id,
         "already_pushed": vendor.bc_status == "pushed",
         "bc_no": vendor.bc_no,
         "target_url": vendor_card_url(),
         "method": "POST",
-        "payload": vendor_to_bc_payload(vendor),
+        "payload": payload,
+        "truncated_fields": truncated_fields,
     }
 
 
@@ -115,13 +125,18 @@ def customer_bc_payload(
     if customer is None:
         raise HTTPException(status_code=404, detail="Customer not found")
 
+    # See the matching comment in vendor_bc_payload above.
+    payload = customer_to_bc_payload(customer)
+    truncated_fields = payload.pop("_truncated_fields", [])
+
     return {
         "customer_id": customer.id,
         "already_pushed": customer.bc_status == "pushed",
         "bc_no": customer.bc_no,
         "target_url": customer_card_url(),
         "method": "POST",
-        "payload": customer_to_bc_payload(customer),
+        "payload": payload,
+        "truncated_fields": truncated_fields,
     }
 
 
