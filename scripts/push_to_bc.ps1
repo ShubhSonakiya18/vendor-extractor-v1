@@ -68,10 +68,31 @@ try {
 }
 catch {
   Write-Host "FAILED." -ForegroundColor Red
+
+  # Windows PowerShell 5.1's Invoke-RestMethod already drains the response
+  # body into $_.ErrorDetails.Message before throwing -- re-reading
+  # GetResponseStream() a second time returns an empty stream, which is why
+  # this used to print "HTTP 400" with nothing after it. ErrorDetails is the
+  # reliable source; GetResponseStream() is kept only as a fallback.
   if ($_.Exception.Response) {
-    $reader = New-Object System.IO.StreamReader($_.Exception.Response.GetResponseStream())
     Write-Host ("HTTP {0}" -f [int]$_.Exception.Response.StatusCode)
-    Write-Host $reader.ReadToEnd()
+  }
+  if ($_.ErrorDetails -and $_.ErrorDetails.Message) {
+    Write-Host $_.ErrorDetails.Message
+  } elseif ($_.Exception.Response) {
+    try {
+      $stream = $_.Exception.Response.GetResponseStream()
+      $stream.Position = 0
+      $reader = New-Object System.IO.StreamReader($stream)
+      $bodyText = $reader.ReadToEnd()
+      if ($bodyText) {
+        Write-Host $bodyText
+      } else {
+        Write-Host "(BC returned an empty response body. Common causes: Vendor_Posting_Group / Gen_Bus_Posting_Group / VAT_Bus_Posting_Group not set on the payload, or the number series for 'No' rejecting an empty value.)"
+      }
+    } catch {
+      Write-Host "(Could not read response body: $($_.Exception.Message))"
+    }
   } else {
     Write-Host $_.Exception.Message
   }
